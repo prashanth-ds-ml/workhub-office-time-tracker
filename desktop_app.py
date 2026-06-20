@@ -295,6 +295,7 @@ class LoginDialog(tk.Toplevel):
         register = ttk.Frame(tabs, padding=16)
         tabs.add(login, text="Sign in")
         tabs.add(register, text="Create account")
+        tabs.bind("<<NotebookTabChanged>>", lambda _event: self.after(10, self._resize_to_content))
 
         # Sign in
         self.email_var = tk.StringVar()
@@ -322,39 +323,43 @@ class LoginDialog(tk.Toplevel):
         self.register_confirm_var = tk.StringVar()
         self.register_setup_var = tk.StringVar()
         self.register_role_var = tk.StringVar(value="User")
-        register_fields = [
-            ("Full name", self.register_name_var, False),
-            ("Email", self.register_email_var, False),
-            ("Password", self.register_password_var, True),
-            ("Confirm password", self.register_confirm_var, True),
-        ]
-        for row, (label, variable, hidden) in enumerate(register_fields):
-            ttk.Label(register, text=label).grid(row=row * 2, column=0, sticky="w")
-            ttk.Entry(register, textvariable=variable, width=36, show="*" if hidden else "").grid(
-                row=row * 2 + 1, column=0, sticky="ew", pady=(3, 10)
-            )
-        ttk.Label(register, text="Account type").grid(row=8, column=0, sticky="w")
+
+        ttk.Label(register, text="Choose account type", font=("Segoe UI", 10, "bold")).grid(
+            row=0, column=0, sticky="w"
+        )
         role_row = ttk.Frame(register)
-        role_row.grid(row=9, column=0, sticky="ew", pady=(3, 10))
+        role_row.grid(row=1, column=0, sticky="ew", pady=(5, 14))
         ttk.Radiobutton(
             role_row,
-            text="Register as User",
+            text="Employee / User",
             variable=self.register_role_var,
             value="User",
             command=self._toggle_admin_setup,
         ).pack(side="left")
         ttk.Radiobutton(
             role_row,
-            text="Register as Admin",
+            text="Administrator",
             variable=self.register_role_var,
             value="Admin",
             command=self._toggle_admin_setup,
-        ).pack(side="left", padx=(14, 0))
+        ).pack(side="left", padx=(18, 0))
+
+        register_fields = [
+            ("Full name", self.register_name_var, False),
+            ("Email", self.register_email_var, False),
+            ("Password", self.register_password_var, True),
+            ("Confirm password", self.register_confirm_var, True),
+        ]
+        for row, (label, variable, hidden) in enumerate(register_fields, start=1):
+            ttk.Label(register, text=label).grid(row=row * 2, column=0, sticky="w")
+            ttk.Entry(register, textvariable=variable, width=36, show="*" if hidden else "").grid(
+                row=row * 2 + 1, column=0, sticky="ew", pady=(3, 10)
+            )
 
         self.setup_label = ttk.Label(register, text="Admin bootstrap key")
         self.setup_entry = ttk.Entry(register, textvariable=self.register_setup_var, width=36, show="*")
         ttk.Button(register, text="Create account", style="Primary.TButton", command=self.submit_registration).grid(
-            row=12, column=0, sticky="ew", pady=(4, 0)
+            row=14, column=0, sticky="ew", pady=(4, 0)
         )
         self.registration_note = ttk.Label(
             register,
@@ -363,7 +368,7 @@ class LoginDialog(tk.Toplevel):
             wraplength=300,
             justify="left",
         )
-        self.registration_note.grid(row=13, column=0, sticky="w", pady=(10, 0))
+        self.registration_note.grid(row=15, column=0, sticky="w", pady=(10, 0))
 
         self.bind("<Return>", lambda _event: self.submit_login() if tabs.index(tabs.select()) == 0 else self.submit_registration())
         self.protocol("WM_DELETE_WINDOW", self.cancel)
@@ -371,8 +376,8 @@ class LoginDialog(tk.Toplevel):
 
     def _toggle_admin_setup(self) -> None:
         if self.register_role_var.get() == "Admin":
-            self.setup_label.grid(row=10, column=0, sticky="w")
-            self.setup_entry.grid(row=11, column=0, sticky="ew", pady=(3, 10))
+            self.setup_label.grid(row=12, column=0, sticky="w")
+            self.setup_entry.grid(row=13, column=0, sticky="ew", pady=(3, 10))
             self.registration_note.configure(text="Admin registration requires the private bootstrap key.")
         else:
             self.setup_label.grid_remove()
@@ -381,17 +386,20 @@ class LoginDialog(tk.Toplevel):
             self.registration_note.configure(text="User accounts do not require the Admin bootstrap key.")
 
     def _show_front(self) -> None:
-        self.update_idletasks()
-        width = self.winfo_reqwidth()
-        height = self.winfo_reqheight()
-        screen_x = max(0, (self.winfo_screenwidth() - width) // 2)
-        screen_y = max(0, (self.winfo_screenheight() - height) // 2)
-        self.geometry(f"{width}x{height}+{screen_x}+{screen_y}")
+        self._resize_to_content()
         self.deiconify()
         self.lift()
         self.attributes("-topmost", True)
         self.after(250, lambda: self.attributes("-topmost", False))
         self.email_entry.focus_force()
+
+    def _resize_to_content(self) -> None:
+        self.update_idletasks()
+        width = max(390, self.winfo_reqwidth())
+        height = max(620, self.winfo_reqheight())
+        screen_x = max(0, (self.winfo_screenwidth() - width) // 2)
+        screen_y = max(0, (self.winfo_screenheight() - height) // 2)
+        self.geometry(f"{width}x{height}+{screen_x}+{screen_y}")
 
     def submit_login(self) -> None:
         email = self.email_var.get().strip()
