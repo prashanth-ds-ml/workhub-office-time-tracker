@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: workhub-api
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: WORKHUB_ENV
+        value: production
+      - key: MONGO_URI
+        sync: false
+      - key: MONGO_DB
+        value: workhub
+      - key: WORKHUB_JWT_SECRET
+        generateValue: true
+      - key: WORKHUB_JWT_EXPIRE_HOURS
+        value: "12"
+      - key: WORKHUB_BOOTSTRAP_SECRET
+        sync: false
+      - key: WORKHUB_ALLOW_SELF_REGISTRATION
+        value: "true"

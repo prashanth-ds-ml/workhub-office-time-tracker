@@ -1,0 +1,1 @@
+print("No tests defined yet – placeholder for future pytest suite.")

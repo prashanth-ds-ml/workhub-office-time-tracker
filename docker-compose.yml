@@ -1,0 +1,28 @@
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+    volumes:
+      - workhub_mongo:/data/db
+
+  api:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - mongo
+    environment:
+      WORKHUB_ENV: production
+      MONGO_URI: mongodb://${MONGO_ROOT_USERNAME}:${MONGO_ROOT_PASSWORD}@mongo:27017/?authSource=admin
+      MONGO_DB: ${MONGO_DB:-workhub}
+      WORKHUB_JWT_SECRET: ${WORKHUB_JWT_SECRET}
+      WORKHUB_JWT_EXPIRE_HOURS: ${WORKHUB_JWT_EXPIRE_HOURS:-12}
+      WORKHUB_BOOTSTRAP_SECRET: ${WORKHUB_BOOTSTRAP_SECRET}
+      WORKHUB_ALLOW_SELF_REGISTRATION: ${WORKHUB_ALLOW_SELF_REGISTRATION:-false}
+    ports:
+      - "8000:8000"
+
+volumes:
+  workhub_mongo:
