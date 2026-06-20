@@ -674,6 +674,9 @@ class WorkHubDesktop(tk.Tk):
             self.refresh_overview()
             self.deiconify()
             self.lift()
+            self.attributes("-topmost", True)
+            self.focus_force()
+            self.after(500, lambda: self.attributes("-topmost", False))
         except Exception as exc:
             title = "Registration failed" if dialog.result["mode"] == "register" else "Login failed"
             messagebox.showerror(title, str(exc))
