@@ -1027,6 +1027,16 @@ def health() -> Dict[str, Any]:
         raise HTTPException(status_code=503, detail=f"Storage unavailable: {exc}") from exc
 
 
+@app.get("/")
+def root() -> Dict[str, Any]:
+    return {
+        "name": "WorkHub API",
+        "status": "running",
+        "health": "/health",
+        "docs": "/docs",
+    }
+
+
 @app.post("/login", response_model=AuthResponse)
 def login(payload: LoginRequest) -> Dict[str, Any]:
     _refresh_cache()
