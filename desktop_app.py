@@ -191,6 +191,56 @@ def ensure_backend() -> None:
     )
 
 
+def wake_shared_backend() -> bool:
+    if BASE_URL.rstrip("/") in {"http://127.0.0.1:8000", "http://localhost:8000"}:
+        return True
+    if wait_for_health(BASE_URL, timeout=1.0):
+        return True
+
+    splash = tk.Tk()
+    splash.title("Starting WorkHub")
+    splash.resizable(False, False)
+    frame = ttk.Frame(splash, padding=24)
+    frame.pack(fill="both", expand=True)
+    ttk.Label(frame, text="Starting WorkHub server…", font=("Segoe UI", 14, "bold")).pack(anchor="w")
+    ttk.Label(
+        frame,
+        text="The free server may take up to 90 seconds to wake after being idle.",
+        foreground="#64748b",
+        wraplength=360,
+        justify="left",
+    ).pack(anchor="w", pady=(5, 14))
+    progress = ttk.Progressbar(frame, mode="indeterminate", length=360)
+    progress.pack(fill="x")
+    progress.start(12)
+    splash.update_idletasks()
+    width, height = splash.winfo_reqwidth(), splash.winfo_reqheight()
+    splash.geometry(
+        f"{width}x{height}+{max(0, (splash.winfo_screenwidth() - width) // 2)}"
+        f"+{max(0, (splash.winfo_screenheight() - height) // 2)}"
+    )
+
+    result = {"connected": False, "done": False}
+
+    def wake() -> None:
+        result["connected"] = wait_for_health(BASE_URL, timeout=90.0)
+        result["done"] = True
+
+    threading.Thread(target=wake, daemon=True).start()
+    while not result["done"]:
+        splash.update()
+        time.sleep(0.05)
+    progress.stop()
+    splash.destroy()
+    if not result["connected"]:
+        messagebox.showerror(
+            "WorkHub server unavailable",
+            f"Could not connect to {BASE_URL} after 90 seconds.\n\n"
+            "Check your internet connection or the configured server URL.",
+        )
+    return result["connected"]
+
+
 def startup_installed() -> bool:
     return STARTUP_BAT.exists()
 
@@ -407,6 +457,7 @@ class WorkHubDesktop(tk.Tk):
         self.manually_hidden = False
         self.tray_icon = None
         self.startup_note_var = tk.StringVar(value="")
+        self.last_heartbeat_at = 0.0
 
         self._build_styles()
         self._build_ui()
@@ -757,8 +808,22 @@ class WorkHubDesktop(tk.Tk):
                 self._update_timer_titles()
             if self.user:
                 self._sync_visibility_policy()
+                self._heartbeat_if_due()
         finally:
             self.after(1000, self._tick)
+
+    def _heartbeat_if_due(self) -> None:
+        if not self._within_office_hours() or time.time() - self.last_heartbeat_at < 600:
+            return
+        self.last_heartbeat_at = time.time()
+
+        def ping() -> None:
+            try:
+                requests.get(f"{BASE_URL}/health", timeout=15).raise_for_status()
+            except Exception:
+                pass
+
+        threading.Thread(target=ping, daemon=True).start()
 
     def _sync_visibility_policy(self) -> None:
         if not self.user:
@@ -908,6 +973,8 @@ class WorkHubDesktop(tk.Tk):
 
 
 def run_app() -> None:
+    if not wake_shared_backend():
+        return
     ensure_backend()
     from admin_panel import WorkHubAdminDesktop
 
