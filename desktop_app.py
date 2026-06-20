@@ -110,6 +110,17 @@ def save_state(state: Dict[str, Any]) -> None:
     STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 
+def response_error_message(response: requests.Response) -> str:
+    try:
+        payload = response.json()
+        detail = payload.get("detail") if isinstance(payload, dict) else None
+        if detail:
+            return str(detail)
+    except Exception:
+        pass
+    return f"Request failed ({response.status_code})"
+
+
 def is_port_in_use(host: str, port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(0.2)
@@ -593,7 +604,8 @@ class WorkHubDesktop(tk.Tk):
             self.withdraw()
             self.after(100, self.login_flow)
             raise RuntimeError("Your session expired. Sign in again.")
-        response.raise_for_status()
+        if not response.ok:
+            raise RuntimeError(response_error_message(response))
         return response
 
     def _restore_user(self) -> None:
@@ -613,7 +625,8 @@ class WorkHubDesktop(tk.Tk):
             payload = dialog.result["payload"]
             endpoint = "/register" if mode == "register" else "/login"
             response = self.session.post(f"{BASE_URL}{endpoint}", json=payload, timeout=10)
-            response.raise_for_status()
+            if not response.ok:
+                raise RuntimeError(response_error_message(response))
             auth = response.json()
             self.access_token = auth["access_token"]
             self.user = auth["user"]
