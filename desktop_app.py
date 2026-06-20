@@ -35,7 +35,7 @@ def _configured_api_url() -> str:
     if environment_url:
         return environment_url.rstrip("/")
     try:
-        config = json.loads(CLIENT_CONFIG_FILE.read_text(encoding="utf-8"))
+        config = json.loads(CLIENT_CONFIG_FILE.read_text(encoding="utf-8-sig"))
         configured = str(config.get("api_url", "")).strip()
         if configured:
             return configured.rstrip("/")
@@ -288,9 +288,14 @@ class LoginDialog(tk.Toplevel):
         ttk.Label(frame, text="Office calendar and time tracking", foreground="#475569").grid(
             row=1, column=0, sticky="w", pady=(2, 16)
         )
+        server_row = ttk.Frame(frame)
+        server_row.grid(row=2, column=0, sticky="ew", pady=(0, 10))
+        self.server_status_var = tk.StringVar(value="Server: checking…")
+        ttk.Label(server_row, textvariable=self.server_status_var, foreground="#64748b").pack(side="left")
+        ttk.Button(server_row, text="Wake / reconnect", command=self.wake_server).pack(side="right")
 
         tabs = ttk.Notebook(frame)
-        tabs.grid(row=2, column=0, sticky="nsew")
+        tabs.grid(row=3, column=0, sticky="nsew")
         login = ttk.Frame(tabs, padding=16)
         register = ttk.Frame(tabs, padding=16)
         tabs.add(login, text="Sign in")
@@ -373,6 +378,24 @@ class LoginDialog(tk.Toplevel):
         self.bind("<Return>", lambda _event: self.submit_login() if tabs.index(tabs.select()) == 0 else self.submit_registration())
         self.protocol("WM_DELETE_WINDOW", self.cancel)
         self.after(50, self._show_front)
+        self.after(100, self.wake_server)
+
+    def wake_server(self) -> None:
+        self.server_status_var.set("Server: starting…")
+
+        def check() -> None:
+            connected = wait_for_health(BASE_URL, timeout=90.0)
+            try:
+                self.after(
+                    0,
+                    lambda: self.server_status_var.set(
+                        "Server: connected" if connected else "Server: unavailable"
+                    ),
+                )
+            except tk.TclError:
+                pass
+
+        threading.Thread(target=check, daemon=True).start()
 
     def _toggle_admin_setup(self) -> None:
         if self.register_role_var.get() == "Admin":
@@ -670,7 +693,7 @@ class WorkHubDesktop(tk.Tk):
             mode = dialog.result["mode"]
             payload = dialog.result["payload"]
             endpoint = "/register" if mode == "register" else "/login"
-            response = self.session.post(f"{BASE_URL}{endpoint}", json=payload, timeout=10)
+            response = self.session.post(f"{BASE_URL}{endpoint}", json=payload, timeout=90)
             if not response.ok:
                 raise RuntimeError(response_error_message(response))
             auth = response.json()
@@ -1035,9 +1058,8 @@ class WorkHubDesktop(tk.Tk):
 
 
 def run_app() -> None:
-    if not wake_shared_backend():
-        return
-    ensure_backend()
+    if BASE_URL.rstrip("/") in {"http://127.0.0.1:8000", "http://localhost:8000"}:
+        ensure_backend()
     from admin_panel import WorkHubAdminDesktop
 
     app = WorkHubAdminDesktop()

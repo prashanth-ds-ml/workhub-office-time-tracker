@@ -51,7 +51,12 @@ New-Item -ItemType Directory -Path $ClientDataDir -Force | Out-Null
 $ClientConfig = @{
     api_url = $ApiUrl
 } | ConvertTo-Json
-Set-Content -LiteralPath (Join-Path $ClientDataDir "client_config.json") -Value $ClientConfig -Encoding UTF8
+$ConfigPath = Join-Path $ClientDataDir "client_config.json"
+[System.IO.File]::WriteAllText(
+    $ConfigPath,
+    $ClientConfig,
+    [System.Text.UTF8Encoding]::new($false)
+)
 
 $Pythonw = Join-Path $InstallDir ".venv\Scripts\pythonw.exe"
 $AppScript = Join-Path $InstallDir "desktop_app.py"
