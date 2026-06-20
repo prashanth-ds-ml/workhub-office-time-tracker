@@ -1,3 +1,7 @@
+param(
+    [string]$ApiUrl = ""
+)
+
 $ErrorActionPreference = "Stop"
 
 $SourceDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -35,11 +39,17 @@ $VenvPython = Join-Path $InstallDir ".venv\Scripts\python.exe"
 & $VenvPython -m pip install --upgrade pip
 & $VenvPython -m pip install -r (Join-Path $InstallDir "requirements.txt")
 
-$ApiUrl = Read-Host "Enter the shared WorkHub API URL (example: https://workhub.company.com). Leave blank for local-only mode"
+if (-not $ApiUrl) {
+    $ApiUrl = Read-Host "Enter the shared WorkHub API URL (example: https://workhub.company.com). Leave blank for local-only mode"
+}
+$ApiUrl = $ApiUrl.Trim().TrimEnd("/")
+if ($ApiUrl -and $ApiUrl -notmatch '^https://') {
+    throw "The shared WorkHub API URL must start with https://"
+}
 $ClientDataDir = Join-Path $env:LOCALAPPDATA "WorkHub"
 New-Item -ItemType Directory -Path $ClientDataDir -Force | Out-Null
 $ClientConfig = @{
-    api_url = $ApiUrl.TrimEnd("/")
+    api_url = $ApiUrl
 } | ConvertTo-Json
 Set-Content -LiteralPath (Join-Path $ClientDataDir "client_config.json") -Value $ClientConfig -Encoding UTF8
 
