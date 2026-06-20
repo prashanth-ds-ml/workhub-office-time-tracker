@@ -7,13 +7,16 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
+from dotenv import load_dotenv
 from pymongo import ASCENDING, MongoClient, ReturnDocument, UpdateOne
 from pymongo.errors import PyMongoError
+
+load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 
-_MONGO_URI = os.getenv("MONGO_URI", "mongodb://127.0.0.1:27017")
+_MONGO_URI = os.getenv("MONGO_URI") or os.getenv("MONGODB_URI") or "mongodb://127.0.0.1:27017"
 _MONGO_DB = os.getenv("MONGO_DB", "office_time_tracker")
 _FORCE_JSON = os.getenv("WORKHUB_STORAGE", "").lower() == "json"
 _PRODUCTION = os.getenv("WORKHUB_ENV", "development").lower() == "production"

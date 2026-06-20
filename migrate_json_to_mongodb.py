@@ -45,7 +45,7 @@ def hash_password(password: str) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Migrate WorkHub JSON data to MongoDB")
     parser.add_argument("--source", type=Path, required=True, help="Directory containing WorkHub JSON files")
-    parser.add_argument("--mongo-uri", default=os.getenv("MONGO_URI"))
+    parser.add_argument("--mongo-uri", default=os.getenv("MONGO_URI") or os.getenv("MONGODB_URI"))
     parser.add_argument("--database", default=os.getenv("MONGO_DB", "workhub"))
     parser.add_argument("--confirm", action="store_true")
     args = parser.parse_args()

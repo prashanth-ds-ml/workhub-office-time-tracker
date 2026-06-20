@@ -21,12 +21,15 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import jwt
+from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, validator
 
 from storage import claim_first_admin, delete_row, load_rows, save_rows, storage_health, upsert_rows
+
+load_dotenv()
 
 app = FastAPI(title="Office Time Tracker API")
 bearer_scheme = HTTPBearer(auto_error=False)
