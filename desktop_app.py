@@ -321,32 +321,64 @@ class LoginDialog(tk.Toplevel):
         self.register_password_var = tk.StringVar()
         self.register_confirm_var = tk.StringVar()
         self.register_setup_var = tk.StringVar()
+        self.register_role_var = tk.StringVar(value="User")
         register_fields = [
             ("Full name", self.register_name_var, False),
             ("Email", self.register_email_var, False),
             ("Password", self.register_password_var, True),
             ("Confirm password", self.register_confirm_var, True),
-            ("Company setup code (first admin only)", self.register_setup_var, True),
         ]
         for row, (label, variable, hidden) in enumerate(register_fields):
             ttk.Label(register, text=label).grid(row=row * 2, column=0, sticky="w")
             ttk.Entry(register, textvariable=variable, width=36, show="*" if hidden else "").grid(
                 row=row * 2 + 1, column=0, sticky="ew", pady=(3, 10)
             )
-        ttk.Button(register, text="Create employee account", style="Primary.TButton", command=self.submit_registration).grid(
-            row=10, column=0, sticky="ew", pady=(4, 0)
+        ttk.Label(register, text="Account type").grid(row=8, column=0, sticky="w")
+        role_row = ttk.Frame(register)
+        role_row.grid(row=9, column=0, sticky="ew", pady=(3, 10))
+        ttk.Radiobutton(
+            role_row,
+            text="Register as User",
+            variable=self.register_role_var,
+            value="User",
+            command=self._toggle_admin_setup,
+        ).pack(side="left")
+        ttk.Radiobutton(
+            role_row,
+            text="Register as Admin",
+            variable=self.register_role_var,
+            value="Admin",
+            command=self._toggle_admin_setup,
+        ).pack(side="left", padx=(14, 0))
+
+        self.setup_label = ttk.Label(register, text="Admin bootstrap key")
+        self.setup_entry = ttk.Entry(register, textvariable=self.register_setup_var, width=36, show="*")
+        ttk.Button(register, text="Create account", style="Primary.TButton", command=self.submit_registration).grid(
+            row=12, column=0, sticky="ew", pady=(4, 0)
         )
-        ttk.Label(
+        self.registration_note = ttk.Label(
             register,
-            text="The first registered account becomes Admin. Later accounts become employees.",
+            text="User accounts do not require the Admin bootstrap key.",
             foreground="#64748b",
             wraplength=300,
             justify="left",
-        ).grid(row=11, column=0, sticky="w", pady=(10, 0))
+        )
+        self.registration_note.grid(row=13, column=0, sticky="w", pady=(10, 0))
 
         self.bind("<Return>", lambda _event: self.submit_login() if tabs.index(tabs.select()) == 0 else self.submit_registration())
         self.protocol("WM_DELETE_WINDOW", self.cancel)
         self.after(50, self._show_front)
+
+    def _toggle_admin_setup(self) -> None:
+        if self.register_role_var.get() == "Admin":
+            self.setup_label.grid(row=10, column=0, sticky="w")
+            self.setup_entry.grid(row=11, column=0, sticky="ew", pady=(3, 10))
+            self.registration_note.configure(text="Admin registration requires the private bootstrap key.")
+        else:
+            self.setup_label.grid_remove()
+            self.setup_entry.grid_remove()
+            self.register_setup_var.set("")
+            self.registration_note.configure(text="User accounts do not require the Admin bootstrap key.")
 
     def _show_front(self) -> None:
         self.update_idletasks()
@@ -387,13 +419,19 @@ class LoginDialog(tk.Toplevel):
         if password != confirm:
             messagebox.showerror("Create account", "Passwords do not match.", parent=self)
             return
+        role = self.register_role_var.get()
+        setup_code = self.register_setup_var.get().strip()
+        if role == "Admin" and not setup_code:
+            messagebox.showerror("Create account", "Admin bootstrap key is required.", parent=self)
+            return
         self.result = {
             "mode": "register",
             "payload": {
                 "username": name,
                 "email": email,
                 "password": password,
-                "bootstrap_secret": self.register_setup_var.get().strip() or None,
+                "role": role,
+                "bootstrap_secret": setup_code or None,
             },
         }
         self.destroy()

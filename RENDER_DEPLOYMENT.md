@@ -15,7 +15,7 @@
 | `MONGO_DB` | `workhub` |
 | `WORKHUB_JWT_SECRET` | Long random secret |
 | `WORKHUB_JWT_EXPIRE_HOURS` | `12` |
-| `WORKHUB_BOOTSTRAP_SECRET` | Private first-admin setup code |
+| `WORKHUB_BOOTSTRAP_SECRET` | Private key required for Admin registration |
 | `WORKHUB_ALLOW_SELF_REGISTRATION` | `true` or `false` |
 
 ## Render service configuration

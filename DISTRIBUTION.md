@@ -6,8 +6,8 @@
 2. Extract `WorkHub-Installer.zip`.
 3. Double-click `Install WorkHub.bat`.
 4. The installer creates an isolated environment and Desktop shortcut.
-5. The first registered account becomes the Admin.
-6. Later registrations become Employee accounts.
+5. Choose Register as Admin or Register as User.
+6. Admin registration requires the private bootstrap key.
 
 WorkHub stores local fallback data under:
 
@@ -24,8 +24,8 @@ Production deployment:
 2. Configure the server using `.env.production.example`.
 3. Set `WORKHUB_ENV=production`, `MONGO_URI`, `MONGO_DB`, and a long random
    `WORKHUB_JWT_SECRET`.
-4. Set `WORKHUB_BOOTSTRAP_SECRET`. The first Admin enters this value in the
-   registration page's company setup-code field.
+4. Set `WORKHUB_BOOTSTRAP_SECRET`. Anyone registering as Admin must enter this
+   private value in the registration page.
 5. Set `WORKHUB_ALLOW_SELF_REGISTRATION=true` only if employees may create
    their own accounts. Otherwise, Admins create accounts from Employees.
 6. Run the API behind HTTPS using `run_production_server.ps1` or your normal

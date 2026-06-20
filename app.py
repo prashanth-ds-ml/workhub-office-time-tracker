@@ -326,7 +326,14 @@ class RegistrationRequest(BaseModel):
     username: str
     email: str
     password: str
+    role: str = "User"
     bootstrap_secret: Optional[str] = None
+
+    @validator("role")
+    def _check_registration_role(cls, value: str) -> str:
+        if value not in {"User", "Admin"}:
+            raise ValueError("role must be 'User' or 'Admin'")
+        return value
 
 
 class AdminUserCreate(BaseModel):
@@ -1077,19 +1084,17 @@ def register(payload: RegistrationRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="Name, email, and password are required")
     if any(candidate.email.lower() == email for candidate in users_cache):
         raise HTTPException(status_code=400, detail="Email already registered")
-    is_first_account = not users_cache
-    if is_first_account and WORKHUB_ENV == "production":
+    if payload.role == "Admin":
         if not hmac.compare_digest(payload.bootstrap_secret or "", BOOTSTRAP_SECRET):
-            raise HTTPException(status_code=403, detail="Invalid company setup code")
-    if not is_first_account and not ALLOW_SELF_REGISTRATION:
+            raise HTTPException(status_code=403, detail="Invalid Admin bootstrap key")
+    elif not ALLOW_SELF_REGISTRATION:
         raise HTTPException(status_code=403, detail="Self-registration is disabled; contact an administrator")
     company_policy = _company_work_policy()
-    role = "Admin" if is_first_account and claim_first_admin() else "User"
     user = User(
         username=username,
         email=email,
         password=_hash_password(payload.password),
-        role=role,
+        role=payload.role,
         is_active=True,
         office_hours=company_policy["office_hours"].copy(),
         rules=company_policy["rules"].copy(),

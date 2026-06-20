@@ -52,7 +52,12 @@ def run() -> None:
         admin_auth = expect(
             client.post(
                 "/register",
-                json={"username": "Integration Admin", "email": "admin@example.com", "password": "admin123"},
+                json={
+                    "username": "Integration Admin",
+                    "email": "admin@example.com",
+                    "password": "admin123",
+                    "role": "Admin",
+                },
             )
         )
         admin = admin_auth["user"]
