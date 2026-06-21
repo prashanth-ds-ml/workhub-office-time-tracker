@@ -1,8 +1,8 @@
 # Deploy WorkHub API on Render
 
-## Recommended services
+## Current services
 
-- Render Starter Web Service
+- Render Free Web Service
 - MongoDB Atlas
 - WorkHub desktop clients configured with the Render HTTPS URL
 
@@ -23,7 +23,16 @@
 - Build command: `pip install -r requirements.txt`
 - Start command: `uvicorn app:app --host 0.0.0.0 --port $PORT`
 - Health check path: `/health`
-- Instance: Starter or higher
+- Instance: Free
+
+Current API:
+
+```text
+https://workhub-api-u07x.onrender.com
+```
+
+The Free instance sleeps after inactivity. WorkHub wakes it during startup and
+sends an office-hours heartbeat every 10 minutes.
 
 After deployment, verify:
 

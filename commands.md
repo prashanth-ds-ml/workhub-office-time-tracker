@@ -67,7 +67,7 @@ curl http://127.0.0.1:8000/health
 
 ### 3.3 Login test
 ```bash
-curl -X POST http://127.0.0.1:8000/login -H "Content-Type: application/json" -d "{\"email\":\"admin@example.com\",\"password\":\"admin123\"}"
+curl -X POST https://workhub-api-u07x.onrender.com/login -H "Content-Type: application/json" -d "{\"email\":\"YOUR_EMAIL\",\"password\":\"YOUR_PASSWORD\"}"
 ```
 
 ### 3.4 Calendar test

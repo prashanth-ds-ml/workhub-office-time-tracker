@@ -82,7 +82,7 @@ python -c "import app; print('api import ok')"
 ```
 
 ### 4.2 Functional checks
-- login with `admin@example.com` / `admin123`
+- register an Administrator with the configured bootstrap key, then log in
 - start and stop a work session
 - start and stop a break
 - browse the month calendar

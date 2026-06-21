@@ -33,18 +33,23 @@ python desktop_app.py
 - Data should be live in MongoDB by default
 - Desktop app should auto-start during office hours and stay in the tray/background
 
-### Default Users (in `data/users.json`)
+### Accounts
 
-- User: `user@example.com` / `user123`
-- Admin: `admin@example.com` / `admin123`
+No demo or default users are seeded.
+
+- Employee/User registration does not require the Admin bootstrap key.
+- Administrator registration requires `WORKHUB_BOOTSTRAP_SECRET`.
 
 ### Authentication
 
-Email/password login. The desktop app stores the current user id locally and sends `X-User-Id` to the API.
+Email/password login. The API returns a time-limited JWT, and the desktop app
+sends it using `Authorization: Bearer <token>`.
 
 ### API Calls
 
-Desktop app → `http://127.0.0.1:8000` via `requests`.
+Installed desktop app → configured Render HTTPS API via `requests`.
+
+Current API: `https://workhub-api-u07x.onrender.com`
 
 ### Calendar Event Types (v1.1)
 

@@ -47,8 +47,9 @@ the client URL.
 Render is the recommended managed host for this project. The repository
 includes `render.yaml`; see `RENDER_DEPLOYMENT.md`.
 
-Use a Starter web service or higher for office use. The Free service sleeps
-when idle and introduces cold-start delays.
+The current deployment uses Render Free. It sleeps when idle and can take up
+to approximately 90 seconds to wake. The desktop client handles this with a
+wake status, retry window, and office-hours heartbeat.
 
 When a shared API URL is configured, the desktop refuses to start a private
 local backend if the company server is unavailable.
