@@ -14,6 +14,8 @@ import hmac
 import json
 import os
 import secrets
+import threading
+import time
 import uuid
 from collections import defaultdict
 from datetime import date, datetime, timedelta
@@ -22,9 +24,12 @@ from typing import Any, Dict, List, Optional
 
 import jwt
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, validator
 
 from storage import claim_first_admin, delete_row, load_rows, save_rows, storage_health, upsert_rows
@@ -39,6 +44,12 @@ JWT_SECRET = os.getenv("WORKHUB_JWT_SECRET", "development-only-change-me")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = int(os.getenv("WORKHUB_JWT_EXPIRE_HOURS", "12"))
 BOOTSTRAP_SECRET = os.getenv("WORKHUB_BOOTSTRAP_SECRET", "")
+AUTH_COOKIE_NAME = "workhub_session"
+configured_cors_origins = [
+    origin.strip()
+    for origin in os.getenv("WORKHUB_CORS_ORIGINS", "").split(",")
+    if origin.strip()
+]
 ALLOW_SELF_REGISTRATION = os.getenv(
     "WORKHUB_ALLOW_SELF_REGISTRATION",
     "false" if WORKHUB_ENV == "production" else "true",
@@ -50,7 +61,7 @@ if WORKHUB_ENV == "production" and not BOOTSTRAP_SECRET:
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
+    allow_origins=configured_cors_origins or [
         "http://127.0.0.1:5173",
         "http://localhost:5173",
         "http://127.0.0.1:4173",
@@ -61,8 +72,27 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+
+@app.middleware("http")
+async def web_cache_headers(request: Request, call_next: Any) -> Response:
+    response = await call_next(request)
+    if request.url.path.startswith("/assets/") and response.status_code == 200:
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    return response
 
 BASE_DIR = Path(__file__).resolve().parent
+WEB_DIST_DIR = BASE_DIR / "web_app" / "dist"
+WEB_INDEX_FILE = WEB_DIST_DIR / "index.html"
+if (WEB_DIST_DIR / "assets").is_dir():
+    app.mount(
+        "/assets",
+        StaticFiles(directory=WEB_DIST_DIR / "assets"),
+        name="web-assets",
+    )
 APP_DATA_DIR = Path(
     os.getenv(
         "WORKHUB_DATA_DIR",
@@ -493,28 +523,58 @@ announcements_cache: List[Announcement] = []
 company_events_cache: List[CompanyEvent] = []
 announcement_reads_cache: List[AnnouncementRead] = []
 alert_ack_cache: List[AlertAcknowledgement] = []
+_cache_refreshed_at = 0.0
+_cache_lock = threading.RLock()
+_CACHE_TTL_SECONDS = float(os.getenv("WORKHUB_CACHE_TTL_SECONDS", "2"))
 
 
-def _refresh_cache() -> None:
+def _refresh_cache(force: bool = False) -> None:
     global users_cache, sessions_cache, breaks_cache
     global calendar_events_cache, attendance_policies_cache
     global announcements_cache, company_events_cache
     global announcement_reads_cache, alert_ack_cache, holiday_master_cache
+    global _cache_refreshed_at
 
-    users_cache = [User(**row) for row in _load_json(USERS_FILE)]
-    sessions_cache = [Session(**row) for row in _load_json(SESSIONS_FILE)]
-    breaks_cache = [Break(**row) for row in _load_json(BREAKS_FILE)]
-    calendar_events_cache = [CalendarEvent(**row) for row in _load_json(CALENDAR_EVENTS_FILE)]
-    holiday_master_cache = _load_json(HOLIDAY_MASTER_FILE)
-    attendance_policies_cache = [
-        AttendancePolicy(**row) for row in _load_json(ATTENDANCE_POLICIES_FILE)
-    ]
-    announcements_cache = [Announcement(**row) for row in _load_json(ANNOUNCEMENTS_FILE)]
-    company_events_cache = [CompanyEvent(**row) for row in _load_json(COMPANY_EVENTS_FILE)]
-    announcement_reads_cache = [
-        AnnouncementRead(**row) for row in _load_json(ANNOUNCEMENT_READS_FILE)
-    ]
-    alert_ack_cache = [AlertAcknowledgement(**row) for row in _load_json(ALERT_ACK_FILE)]
+    now = time.monotonic()
+    if not force and now - _cache_refreshed_at < _CACHE_TTL_SECONDS:
+        return
+    with _cache_lock:
+        now = time.monotonic()
+        if not force and now - _cache_refreshed_at < _CACHE_TTL_SECONDS:
+            return
+        loaded_users = [User(**row) for row in _load_json(USERS_FILE)]
+        loaded_sessions = [Session(**row) for row in _load_json(SESSIONS_FILE)]
+        loaded_breaks = [Break(**row) for row in _load_json(BREAKS_FILE)]
+        loaded_calendar_events = [
+            CalendarEvent(**row) for row in _load_json(CALENDAR_EVENTS_FILE)
+        ]
+        loaded_holidays = _load_json(HOLIDAY_MASTER_FILE)
+        loaded_policies = [
+            AttendancePolicy(**row) for row in _load_json(ATTENDANCE_POLICIES_FILE)
+        ]
+        loaded_announcements = [
+            Announcement(**row) for row in _load_json(ANNOUNCEMENTS_FILE)
+        ]
+        loaded_company_events = [
+            CompanyEvent(**row) for row in _load_json(COMPANY_EVENTS_FILE)
+        ]
+        loaded_reads = [
+            AnnouncementRead(**row) for row in _load_json(ANNOUNCEMENT_READS_FILE)
+        ]
+        loaded_alerts = [
+            AlertAcknowledgement(**row) for row in _load_json(ALERT_ACK_FILE)
+        ]
+        users_cache = loaded_users
+        sessions_cache = loaded_sessions
+        breaks_cache = loaded_breaks
+        calendar_events_cache = loaded_calendar_events
+        holiday_master_cache = loaded_holidays
+        attendance_policies_cache = loaded_policies
+        announcements_cache = loaded_announcements
+        company_events_cache = loaded_company_events
+        announcement_reads_cache = loaded_reads
+        alert_ack_cache = loaded_alerts
+        _cache_refreshed_at = now
 
 
 def _persist_cache() -> None:
@@ -549,11 +609,17 @@ def get_user_by_id(user_id: str) -> User:
 
 def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+    session_token: Optional[str] = Cookie(default=None, alias=AUTH_COOKIE_NAME),
 ) -> User:
-    if not credentials or credentials.scheme.lower() != "bearer":
+    token = (
+        credentials.credentials
+        if credentials and credentials.scheme.lower() == "bearer"
+        else session_token
+    )
+    if not token:
         raise HTTPException(status_code=401, detail="Missing bearer token")
     try:
-        payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         user_id = payload.get("sub")
         if not user_id:
             raise ValueError("missing subject")
@@ -1035,7 +1101,12 @@ def health() -> Dict[str, Any]:
 
 
 @app.get("/")
-def root() -> Dict[str, Any]:
+def root() -> Any:
+    if WEB_INDEX_FILE.is_file():
+        return FileResponse(
+            WEB_INDEX_FILE,
+            headers={"Cache-Control": "no-cache"},
+        )
     return {
         "name": "WorkHub API",
         "status": "running",
@@ -1045,7 +1116,7 @@ def root() -> Dict[str, Any]:
 
 
 @app.post("/login", response_model=AuthResponse)
-def login(payload: LoginRequest) -> Dict[str, Any]:
+def login(payload: LoginRequest, response: Response) -> Dict[str, Any]:
     _refresh_cache()
     lookup_email = payload.email.lower() if payload.email else None
     lookup_username = payload.username.lower() if payload.username else None
@@ -1068,15 +1139,25 @@ def login(payload: LoginRequest) -> Dict[str, Any]:
     if not user.password.startswith("pbkdf2_sha256$"):
         user.password = _hash_password(payload.password)
         _upsert_models(USERS_FILE, [user])
+    access_token = _create_access_token(user)
+    response.set_cookie(
+        AUTH_COOKIE_NAME,
+        access_token,
+        max_age=JWT_EXPIRE_HOURS * 3600,
+        httponly=True,
+        secure=WORKHUB_ENV == "production",
+        samesite="lax",
+        path="/",
+    )
     return {
-        "access_token": _create_access_token(user),
+        "access_token": access_token,
         "token_type": "bearer",
         "user": user.dict(exclude={"password"}),
     }
 
 
 @app.post("/register", response_model=AuthResponse)
-def register(payload: RegistrationRequest) -> Dict[str, Any]:
+def register(payload: RegistrationRequest, response: Response) -> Dict[str, Any]:
     _refresh_cache()
     username = payload.username.strip()
     email = payload.email.strip().lower()
@@ -1101,8 +1182,18 @@ def register(payload: RegistrationRequest) -> Dict[str, Any]:
     )
     users_cache.append(user)
     _upsert_models(USERS_FILE, [user])
+    access_token = _create_access_token(user)
+    response.set_cookie(
+        AUTH_COOKIE_NAME,
+        access_token,
+        max_age=JWT_EXPIRE_HOURS * 3600,
+        httponly=True,
+        secure=WORKHUB_ENV == "production",
+        samesite="lax",
+        path="/",
+    )
     return {
-        "access_token": _create_access_token(user),
+        "access_token": access_token,
         "token_type": "bearer",
         "user": user.dict(exclude={"password"}),
     }
@@ -1111,6 +1202,18 @@ def register(payload: RegistrationRequest) -> Dict[str, Any]:
 @app.get("/me", response_model=UserPublic)
 def read_me(current_user: User = Depends(get_current_user)) -> User:
     return current_user
+
+
+@app.post("/logout")
+def logout(response: Response) -> Dict[str, str]:
+    response.delete_cookie(
+        AUTH_COOKIE_NAME,
+        httponly=True,
+        secure=WORKHUB_ENV == "production",
+        samesite="lax",
+        path="/",
+    )
+    return {"message": "Signed out"}
 
 
 @app.post("/office_hours/{user_id}")
@@ -1473,12 +1576,7 @@ def admin_dashboard(current_user: User = Depends(is_admin)) -> Dict[str, Any]:
     return dashboard
 
 
-@app.get("/admin/analytics")
-def admin_analytics(
-    month: Optional[str] = None,
-    current_user: User = Depends(is_admin),
-) -> Dict[str, Any]:
-    selected_month = month or _current_month_label()
+def _admin_analytics(selected_month: str) -> Dict[str, Any]:
     month_events = _month_calendar(selected_month)
     attendance_events = {
         event["date"]: event
@@ -1541,6 +1639,60 @@ def admin_analytics(
             "total_work_minutes": round(sum(row["total_work_minutes"] for row in employee_rows), 2),
         },
     }
+
+
+@app.get("/admin/analytics")
+def admin_analytics(
+    month: Optional[str] = None,
+    current_user: User = Depends(is_admin),
+) -> Dict[str, Any]:
+    return _admin_analytics(month or _current_month_label())
+
+
+@app.get("/web/bootstrap")
+def web_bootstrap(
+    month: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Return the browser workspace in one round trip.
+
+    Authentication refreshes the Mongo-backed caches once before this handler,
+    so all sections are calculated from one consistent data snapshot.
+    """
+    selected_month = month or _current_month_label()
+    user_sessions = [
+        session for session in sessions_cache if session.user_id == current_user.id
+    ]
+    user_sessions.sort(key=lambda item: item.start, reverse=True)
+    payload: Dict[str, Any] = {
+        "generated_at": _iso_now(),
+        "user": current_user.dict(exclude={"password"}),
+        "overview": _dashboard_overview(current_user, selected_month),
+        "sessions": [_session_view(session) for session in user_sessions],
+        "announcements": [
+            {
+                **announcement.dict(),
+                "is_read": _read_status_for_user(announcement.id, current_user.id),
+            }
+            for announcement in sorted(
+                announcements_cache,
+                key=lambda item: item.created_at,
+                reverse=True,
+            )
+        ],
+        "employees": [],
+        "analytics": None,
+        "policy": None,
+    }
+    if current_user.role == "Admin":
+        payload.update(
+            {
+                "employees": [_user_summary(user) for user in users_cache],
+                "analytics": _admin_analytics(selected_month),
+                "policy": _company_work_policy(),
+            }
+        )
+    return payload
 
 
 @app.get("/admin/users")
@@ -1621,3 +1773,22 @@ def admin_update_user(
     if changed_breaks:
         _upsert_models(BREAKS_FILE, changed_breaks)
     return _user_summary(user)
+
+
+@app.get("/{browser_path:path}", include_in_schema=False)
+def serve_react_application(browser_path: str) -> Any:
+    """Serve the React SPA without changing any existing API routes."""
+    if WEB_INDEX_FILE.is_file():
+        return FileResponse(
+            WEB_INDEX_FILE,
+            headers={"Cache-Control": "no-cache"},
+        )
+    if not browser_path:
+        return {
+            "name": "WorkHub API",
+            "status": "running",
+            "health": "/health",
+            "docs": "/docs",
+            "web": "Run `cd web_app && npm run build` to enable the React interface.",
+        }
+    raise HTTPException(status_code=404, detail="Not found")
