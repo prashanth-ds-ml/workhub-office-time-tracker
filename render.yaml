@@ -24,3 +24,5 @@ services:
         sync: false
       - key: WORKHUB_ALLOW_SELF_REGISTRATION
         value: "true"
+      - key: WORKHUB_EMAIL_DOMAIN
+        value: sims.healthcare

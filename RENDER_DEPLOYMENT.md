@@ -16,6 +16,7 @@
 | `WORKHUB_JWT_EXPIRE_HOURS` | `12` |
 | `WORKHUB_BOOTSTRAP_SECRET` | Private key required for Admin registration |
 | `WORKHUB_ALLOW_SELF_REGISTRATION` | `true` or `false` |
+| `WORKHUB_EMAIL_DOMAIN` | `sims.healthcare` |
 
 ## Blueprint deployment
 

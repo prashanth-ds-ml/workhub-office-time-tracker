@@ -39,7 +39,8 @@ Open `http://127.0.0.1:5173`. The React app uses a single workspace bootstrap
 request and cached static assets for fast repeat loads.
 
 Registration explicitly selects Employee/User or Administrator. Administrator
-registration requires the private bootstrap key.
+registration requires the private bootstrap key. All accounts must use an
+`@sims.healthcare` company email address.
 
 ## Production build
 
