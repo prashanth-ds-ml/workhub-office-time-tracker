@@ -1126,6 +1126,18 @@ def root() -> Any:
     }
 
 
+@app.get("/med360-logo.png", include_in_schema=False)
+def med360_logo() -> Any:
+    logo_path = WEB_DIST_DIR / "med360-logo.png"
+    if not logo_path.is_file():
+        raise HTTPException(status_code=404, detail="Logo not found")
+    return FileResponse(
+        logo_path,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
 @app.post("/login", response_model=AuthResponse)
 def login(payload: LoginRequest, response: Response) -> Dict[str, Any]:
     _refresh_cache()
