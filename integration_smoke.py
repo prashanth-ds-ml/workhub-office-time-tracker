@@ -53,6 +53,9 @@ def run() -> None:
             asset_response = client.get(f"/assets/{asset.name}")
             assert asset_response.status_code == 200
             assert "immutable" in asset_response.headers.get("cache-control", "")
+            logo_response = client.get("/med360-logo.png")
+            assert logo_response.status_code == 200
+            assert logo_response.headers["content-type"] == "image/png"
         assert client.get("/docs").status_code == 200
         health = expect(client.get("/health"))
         assert health["status"] == "ok"
