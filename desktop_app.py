@@ -665,7 +665,20 @@ class WorkHubDesktop(tk.Tk):
         return {"Authorization": f"Bearer {self.access_token}"}
 
     def _request(self, method: str, path: str, **kwargs: Any) -> requests.Response:
-        response = self.session.request(method, f"{BASE_URL}{path}", timeout=10, headers={**self._api_headers(), **kwargs.pop("headers", {})}, **kwargs)
+        timeout = kwargs.pop("timeout", 90)
+        try:
+            response = self.session.request(
+                method,
+                f"{BASE_URL}{path}",
+                timeout=timeout,
+                headers={**self._api_headers(), **kwargs.pop("headers", {})},
+                **kwargs,
+            )
+        except requests.RequestException as exc:
+            raise RuntimeError(
+                "The WorkHub server did not respond. It may be waking up; "
+                "wait a few seconds and try again."
+            ) from exc
         if response.status_code == 401 and self.user:
             self.access_token = None
             self.user = None
@@ -974,6 +987,10 @@ class WorkHubDesktop(tk.Tk):
             self._request("post", f"/sessions/{session_id}/stop")
             self.refresh_overview()
         except Exception as exc:
+            self.refresh_overview()
+            session = self.overview.get("today", {}).get("session") if self.overview else None
+            if session and session.get("id") == session_id and not session.get("is_active"):
+                return
             messagebox.showerror("Stop work", str(exc))
 
     def start_break(self) -> None:
@@ -994,6 +1011,10 @@ class WorkHubDesktop(tk.Tk):
             self._request("post", f"/sessions/{session_id}/break/stop")
             self.refresh_overview()
         except Exception as exc:
+            self.refresh_overview()
+            session = self.overview.get("today", {}).get("session") if self.overview else None
+            if session and session.get("id") == session_id and not session.get("active_break"):
+                return
             messagebox.showerror("Stop break", str(exc))
 
     def post_announcement(self) -> None:

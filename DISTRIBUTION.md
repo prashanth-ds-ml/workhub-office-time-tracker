@@ -2,12 +2,16 @@
 
 ## Install and run
 
-1. Install Python 3.10 or newer and enable `Add Python to PATH`.
-2. Extract `WorkHub-Installer.zip`.
-3. Double-click `Install WorkHub.bat`.
-4. The installer creates an isolated environment and Desktop shortcut.
-5. Choose Register as Admin or Register as User.
-6. Admin registration requires the private bootstrap key.
+1. Extract the complete `WorkHub-Installer.zip` archive.
+2. Double-click `Install WorkHub.bat`.
+3. The installer copies WorkHub and its bundled runtime dependencies, then
+   creates Desktop and Start menu shortcuts.
+4. Choose Register as Admin or Register as User.
+5. Admin registration requires the private bootstrap key.
+
+Python and pip are not required on employee computers. Do not move
+`Install WorkHub.bat` out of the extracted installer folder before running it.
+The installer configures the current hosted WorkHub API automatically.
 
 WorkHub stores local fallback data under:
 
@@ -74,14 +78,14 @@ credentials remain only on the central server.
 
 ## Windows startup
 
-From a terminal in the installed app folder:
+The installed executable can manage its Windows startup entry directly:
 
 ```powershell
-.\.venv\Scripts\python.exe desktop_app.py --install-startup
+& "$env:LOCALAPPDATA\WorkHubApp\WorkHub.exe" --install-startup
 ```
 
 Remove startup:
 
 ```powershell
-.\.venv\Scripts\python.exe desktop_app.py --uninstall-startup
+& "$env:LOCALAPPDATA\WorkHubApp\WorkHub.exe" --uninstall-startup
 ```

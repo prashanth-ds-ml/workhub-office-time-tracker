@@ -41,9 +41,19 @@ def run() -> None:
             current = Path(getattr(app, name))
             setattr(app, name, root / current.name)
         app._seed_initial_data()
-        app._refresh_cache()
+        app._refresh_cache(force=True)
 
         client = TestClient(app.app)
+        web_home = client.get("/")
+        assert web_home.status_code == 200
+        if app.WEB_INDEX_FILE.is_file():
+            assert "text/html" in web_home.headers["content-type"]
+            assert client.get("/calendar").status_code == 200
+            asset = next((app.WEB_DIST_DIR / "assets").glob("*.js"))
+            asset_response = client.get(f"/assets/{asset.name}")
+            assert asset_response.status_code == 200
+            assert "immutable" in asset_response.headers.get("cache-control", "")
+        assert client.get("/docs").status_code == 200
         health = expect(client.get("/health"))
         assert health["status"] == "ok"
         assert health["storage"]["connected"] is True
@@ -75,8 +85,11 @@ def run() -> None:
         employee_headers = auth_headers(employee_auth)
         assert employee["role"] == "User"
         assert "password" not in employee
-        login_auth = expect(client.post("/login", json={"email": employee["email"], "password": "secret1"}))
+        login_response = client.post("/login", json={"email": employee["email"], "password": "secret1"})
+        login_auth = expect(login_response)
         assert login_auth["user"]["id"] == employee["id"]
+        assert "workhub_session" in client.cookies
+        assert expect(client.get("/me"))["id"] == employee["id"]
         expect(client.get("/admin/users", headers=employee_headers), 403)
 
         policy = {
@@ -134,6 +147,8 @@ def run() -> None:
         expect(client.post(f"/sessions/{session_id}/break/stop", headers=employee_headers))
         expect(client.post(f"/sessions/{session_id}/stop", headers=employee_headers))
         assert expect(client.get("/sessions", headers=employee_headers))[0]["is_active"] is False
+        dashboard = expect(client.get("/admin/dashboard", headers=admin_headers))
+        assert dashboard[employee["username"]]["work_hours"] >= 0
 
         announcement = expect(
             client.post(
@@ -149,7 +164,13 @@ def run() -> None:
         overview = expect(client.get("/dashboard/overview", headers=employee_headers, params={"month": "2026-06"}))
         assert "remaining_working_days" in overview["month_summary"]
         analytics = expect(client.get("/admin/analytics", headers=admin_headers, params={"month": "2026-06"}))
-        assert any(row["user_id"] == employee["id"] for row in analytics["employees"])
+        employee_analytics = next(row for row in analytics["employees"] if row["user_id"] == employee["id"])
+        assert employee_analytics["days_worked"] == 1
+        workspace = expect(client.get("/web/bootstrap", headers=admin_headers, params={"month": "2026-06"}))
+        assert workspace["overview"]["month"] == "2026-06"
+        assert workspace["analytics"]["summary"]["employees"] >= 2
+        assert any(row["id"] == employee["id"] for row in workspace["employees"])
+        expect(client.post("/logout", headers=admin_headers))
 
         expect(client.patch(f"/admin/users/{employee['id']}", headers=admin_headers, json={"is_active": False}))
         expect(client.post("/login", json={"email": employee["email"], "password": "secret1"}), 403)
