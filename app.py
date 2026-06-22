@@ -1138,6 +1138,18 @@ def med360_logo() -> Any:
     )
 
 
+@app.get("/med360-launcher.svg", include_in_schema=False)
+def med360_launcher() -> Any:
+    icon_path = WEB_DIST_DIR / "med360-launcher.svg"
+    if not icon_path.is_file():
+        raise HTTPException(status_code=404, detail="Launcher icon not found")
+    return FileResponse(
+        icon_path,
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
 @app.post("/login", response_model=AuthResponse)
 def login(payload: LoginRequest, response: Response) -> Dict[str, Any]:
     _refresh_cache()
