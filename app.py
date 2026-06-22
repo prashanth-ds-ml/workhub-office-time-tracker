@@ -45,6 +45,7 @@ JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = int(os.getenv("WORKHUB_JWT_EXPIRE_HOURS", "12"))
 BOOTSTRAP_SECRET = os.getenv("WORKHUB_BOOTSTRAP_SECRET", "")
 AUTH_COOKIE_NAME = "workhub_session"
+ALLOWED_EMAIL_DOMAIN = os.getenv("WORKHUB_EMAIL_DOMAIN", "sims.healthcare").strip().lower()
 configured_cors_origins = [
     origin.strip()
     for origin in os.getenv("WORKHUB_CORS_ORIGINS", "").split(",")
@@ -231,6 +232,16 @@ def _create_access_token(user: "User") -> str:
         JWT_SECRET,
         algorithm=JWT_ALGORITHM,
     )
+
+
+def _normalize_company_email(value: str) -> str:
+    email = value.strip().lower()
+    if not email or email.rsplit("@", 1)[-1] != ALLOWED_EMAIL_DOMAIN:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Use your @{ALLOWED_EMAIL_DOMAIN} company email address",
+        )
+    return email
 
 
 def _load_json(path: Path) -> List[Dict[str, Any]]:
@@ -1118,7 +1129,7 @@ def root() -> Any:
 @app.post("/login", response_model=AuthResponse)
 def login(payload: LoginRequest, response: Response) -> Dict[str, Any]:
     _refresh_cache()
-    lookup_email = payload.email.lower() if payload.email else None
+    lookup_email = _normalize_company_email(payload.email) if payload.email else None
     lookup_username = payload.username.lower() if payload.username else None
     user = next(
         (
@@ -1160,7 +1171,7 @@ def login(payload: LoginRequest, response: Response) -> Dict[str, Any]:
 def register(payload: RegistrationRequest, response: Response) -> Dict[str, Any]:
     _refresh_cache()
     username = payload.username.strip()
-    email = payload.email.strip().lower()
+    email = _normalize_company_email(payload.email)
     if not username or not email or not payload.password:
         raise HTTPException(status_code=400, detail="Name, email, and password are required")
     if any(candidate.email.lower() == email for candidate in users_cache):
@@ -1706,7 +1717,7 @@ def admin_create_user(
     current_user: User = Depends(is_admin),
 ) -> Dict[str, Any]:
     username = payload.username.strip()
-    email = payload.email.strip().lower()
+    email = _normalize_company_email(payload.email)
     if not username or not email or not payload.password:
         raise HTTPException(status_code=400, detail="Name, email, and password are required")
     if any(user.email.lower() == email for user in users_cache):
@@ -1735,9 +1746,7 @@ def admin_update_user(
     user = get_user_by_id(user_id)
     updates = payload.dict(exclude_unset=True)
     if "email" in updates:
-        email = updates["email"].strip().lower()
-        if not email:
-            raise HTTPException(status_code=400, detail="Email is required")
+        email = _normalize_company_email(updates["email"])
         if any(candidate.id != user.id and candidate.email.lower() == email for candidate in users_cache):
             raise HTTPException(status_code=400, detail="Email already registered")
         updates["email"] = email

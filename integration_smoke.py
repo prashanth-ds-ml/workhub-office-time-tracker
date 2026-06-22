@@ -64,7 +64,7 @@ def run() -> None:
                 "/register",
                 json={
                     "username": "Integration Admin",
-                    "email": "admin@example.com",
+                    "email": "admin@sims.healthcare",
                     "password": "admin123",
                     "role": "Admin",
                 },
@@ -74,11 +74,29 @@ def run() -> None:
         admin_headers = auth_headers(admin_auth)
         assert admin["role"] == "Admin"
         assert "password" not in admin
+        expect(
+            client.post(
+                "/register",
+                json={
+                    "username": "External Employee",
+                    "email": "external@example.com",
+                    "password": "secret1",
+                },
+            ),
+            403,
+        )
+        expect(
+            client.post(
+                "/login",
+                json={"email": "external@example.com", "password": "secret1"},
+            ),
+            403,
+        )
 
         employee_auth = expect(
             client.post(
                 "/register",
-                json={"username": "Integration Employee", "email": "integration@example.com", "password": "secret1"},
+                json={"username": "Integration Employee", "email": "integration@sims.healthcare", "password": "secret1"},
             )
         )
         employee = employee_auth["user"]
@@ -110,10 +128,18 @@ def run() -> None:
             client.post(
                 "/admin/users",
                 headers=admin_headers,
-                json={"username": "Managed Employee", "email": "managed@example.com", "password": "secret2", "role": "User"},
+                json={"username": "Managed Employee", "email": "managed@sims.healthcare", "password": "secret2", "role": "User"},
             )
         )
         assert created["office_hours"] == policy["office_hours"]
+        expect(
+            client.post(
+                "/admin/users",
+                headers=admin_headers,
+                json={"username": "External User", "email": "external@example.com", "password": "secret2"},
+            ),
+            403,
+        )
         updated = expect(
             client.patch(
                 f"/admin/users/{created['id']}",

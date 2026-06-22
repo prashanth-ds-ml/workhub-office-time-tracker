@@ -22,6 +22,8 @@ const mins = value => {
 };
 const monthTitle = key => new Date(`${key}-02T00:00:00`).toLocaleDateString(undefined, { month: "long", year: "numeric" });
 const today = () => new Date().toISOString().slice(0, 10);
+const COMPANY_DOMAIN = "sims.healthcare";
+const companyEmail = value => value.trim().toLowerCase().endsWith(`@${COMPANY_DOMAIN}`);
 const readStoredJson = (storage, key) => {
   try { return JSON.parse(storage.getItem(key) || "null"); }
   catch { storage.removeItem(key); return null; }
@@ -58,25 +60,26 @@ function Auth({ onAuth }) {
   const submit = async e => {
     e.preventDefault(); setBusy(true); setError("");
     try {
+      if (!companyEmail(form.email)) throw new Error(`Use your @${COMPANY_DOMAIN} company email address.`);
       const body = mode === "login" ? { email: form.email, password: form.password } : form;
       onAuth(await api(mode === "login" ? "/login" : "/register", { method: "POST", body }));
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   };
   return <div className="auth-shell">
     <section className="auth-brand">
-      <div className="brand-mark"><BriefcaseBusiness /></div>
+      <img className="med360-logo auth-logo" src="/med360-logo.png" alt="Med 360+ Smart Health" />
       <div><span className="eyebrow">WORKHUB 1.1</span><h1>Time, attendance and your company calendar—finally in one place.</h1>
-      <p>Know what today requires. Track focused work. Keep your entire team aligned.</p></div>
+      <p>A focused employee workspace for the Med 360+ team.</p></div>
       <div className="auth-points"><span><ShieldCheck /> Secure company access</span><span><Activity /> Live attendance tracking</span></div>
     </section>
     <section className="auth-card">
-      <div className="mobile-logo"><BriefcaseBusiness /> WorkHub</div>
+      <div className="mobile-logo"><img className="med360-logo mobile-brand-logo" src="/med360-logo.png" alt="Med 360+" /><span>WorkHub</span></div>
       <span className="eyebrow">{mode === "login" ? "WELCOME BACK" : "CREATE ACCOUNT"}</span>
       <h2>{mode === "login" ? "Sign in to your workspace" : "Join your company workspace"}</h2>
       <p className="muted">{mode === "login" ? "Enter your credentials to continue." : "Your account connects to the shared company calendar."}</p>
       <form onSubmit={submit}>
         {mode === "register" && <label>Full name<input required value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} placeholder="Jane Smith" /></label>}
-        <label>Email address<input required type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="you@company.com" /></label>
+        <label>Company email<input required type="email" pattern={`[^@\\s]+@${COMPANY_DOMAIN.replace(".", "\\.")}`} title={`Use your @${COMPANY_DOMAIN} email`} value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} placeholder={`you@${COMPANY_DOMAIN}`} /></label>
         <label>Password<input required type="password" minLength="6" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} placeholder="••••••••" /></label>
         {mode === "register" && <><label>Account type<select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })}><option value="User">Employee</option><option value="Admin">Administrator</option></select></label>
         {form.role === "Admin" && <label>Admin bootstrap key<input required value={form.bootstrap_secret} onChange={e => setForm({ ...form, bootstrap_secret: e.target.value })} /></label>}</>}
@@ -162,7 +165,7 @@ function Forms({ type, token, users, policy, onDone, onClose }) {
   return <form className="modal-form" onSubmit={submit}>
     {type === "event" && <><label>Event type<select value={form.event_type} onChange={e=>setForm({...form,event_type:e.target.value})}>{Object.keys(eventColors).map(x=><option key={x}>{x}</option>)}</select></label><label>Date<input type="date" required value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/></label><label>Title<input required value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/></label><label>Description<textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})}/></label></>}
     {type === "announcement" && <><label>Title<input required value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/></label><label>Message<textarea required value={form.content} onChange={e=>setForm({...form,content:e.target.value})}/></label><label>Effective date<input type="date" value={form.effective_date} onChange={e=>setForm({...form,effective_date:e.target.value})}/></label></>}
-    {type === "employee" && <><label>Full name<input required value={form.username} onChange={e=>setForm({...form,username:e.target.value})}/></label><label>Email<input required type="email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})}/></label><label>Temporary password<input required minLength="6" type="password" value={form.password} onChange={e=>setForm({...form,password:e.target.value})}/></label><label>Role<select value={form.role} onChange={e=>setForm({...form,role:e.target.value})}><option>User</option><option>Admin</option></select></label></>}
+    {type === "employee" && <><label>Full name<input required value={form.username} onChange={e=>setForm({...form,username:e.target.value})}/></label><label>Company email<input required type="email" pattern={`[^@\\s]+@${COMPANY_DOMAIN.replace(".", "\\.")}`} placeholder={`employee@${COMPANY_DOMAIN}`} value={form.email} onChange={e=>setForm({...form,email:e.target.value})}/></label><label>Temporary password<input required minLength="6" type="password" value={form.password} onChange={e=>setForm({...form,password:e.target.value})}/></label><label>Role<select value={form.role} onChange={e=>setForm({...form,role:e.target.value})}><option>User</option><option>Admin</option></select></label></>}
     {type === "policy" && <><div className="form-grid"><label>Office starts<input type="time" value={form.office_hours.start} onChange={e=>setForm({...form,office_hours:{...form.office_hours,start:e.target.value}})}/></label><label>Office ends<input type="time" value={form.office_hours.end} onChange={e=>setForm({...form,office_hours:{...form.office_hours,end:e.target.value}})}/></label></div><div className="form-grid">{Object.entries(form.rules).map(([key,val])=><label key={key}>{key.replaceAll("_"," ")}<input type="number" step="0.5" value={val} onChange={e=>setForm({...form,rules:{...form.rules,[key]:Number(e.target.value)}})}/></label>)}</div></>}
     {error && <div className="error">{error}</div>}<div className="modal-actions"><button type="button" className="ghost" onClick={onClose}>Cancel</button><button className="primary">Save changes</button></div>
   </form>;
@@ -221,7 +224,7 @@ export default function App() {
   const session = data.overview.today?.session, active = session?.is_active, onBreak = session?.active_break;
   const title = nav.find(x=>x[0]===page)?.[1] || "WorkHub";
   return <div className="app-shell">
-    <aside className={mobile ? "open" : ""}><div className="logo"><div className="brand-mark small"><BriefcaseBusiness/></div><div><strong>WorkHub</strong><span>Company workspace</span></div><button className="icon-button close-nav" onClick={()=>setMobile(false)}><X/></button></div>
+    <aside className={mobile ? "open" : ""}><div className="logo"><img className="med360-logo sidebar-logo" src="/med360-logo.png" alt="Med 360+" /><div><strong>WorkHub</strong><span>Employee workspace</span></div><button className="icon-button close-nav" onClick={()=>setMobile(false)}><X/></button></div>
       <nav>{nav.filter(x=>!x[3]||admin).map(([key,label,Icon])=><button key={key} className={page===key?"active":""} onClick={()=>{setPage(key);setMobile(false)}}><Icon/>{label}{key==="announcements"&&data.overview.unread_announcements>0&&<i>{data.overview.unread_announcements}</i>}</button>)}</nav>
       <div className="sidebar-user"><div className="avatar">{auth.user.username.slice(0,2).toUpperCase()}</div><div><strong>{auth.user.username}</strong><span>{auth.user.role}</span></div><button className="icon-button" onClick={logout}><LogOut/></button></div>
     </aside>
