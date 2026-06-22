@@ -56,6 +56,9 @@ def run() -> None:
             logo_response = client.get("/med360-logo.png")
             assert logo_response.status_code == 200
             assert logo_response.headers["content-type"] == "image/png"
+            launcher_response = client.get("/med360-launcher.svg")
+            assert launcher_response.status_code == 200
+            assert "image/svg+xml" in launcher_response.headers["content-type"]
         assert client.get("/docs").status_code == 200
         health = expect(client.get("/health"))
         assert health["status"] == "ok"

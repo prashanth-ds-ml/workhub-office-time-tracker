@@ -67,13 +67,13 @@ function Auth({ onAuth }) {
   };
   return <div className="auth-shell">
     <section className="auth-brand">
-      <img className="med360-logo auth-logo" src="/med360-logo.png" alt="Med 360+ Smart Health" />
+      <div className="product-brand auth-product-brand"><img className="launcher-mark auth-launcher" src="/med360-launcher.svg" alt="Med 360+" /><div><strong>WorkHub</strong><span>by Med 360+ Smart Health</span></div></div>
       <div><span className="eyebrow">WORKHUB 1.1</span><h1>Time, attendance and your company calendar—finally in one place.</h1>
       <p>A focused employee workspace for the Med 360+ team.</p></div>
       <div className="auth-points"><span><ShieldCheck /> Secure company access</span><span><Activity /> Live attendance tracking</span></div>
     </section>
     <section className="auth-card">
-      <div className="mobile-logo"><img className="med360-logo mobile-brand-logo" src="/med360-logo.png" alt="Med 360+" /><span>WorkHub</span></div>
+      <div className="mobile-logo"><img className="launcher-mark mobile-launcher" src="/med360-launcher.svg" alt="Med 360+" /><span>WorkHub</span></div>
       <span className="eyebrow">{mode === "login" ? "WELCOME BACK" : "CREATE ACCOUNT"}</span>
       <h2>{mode === "login" ? "Sign in to your workspace" : "Join your company workspace"}</h2>
       <p className="muted">{mode === "login" ? "Enter your credentials to continue." : "Your account connects to the shared company calendar."}</p>
@@ -224,7 +224,7 @@ export default function App() {
   const session = data.overview.today?.session, active = session?.is_active, onBreak = session?.active_break;
   const title = nav.find(x=>x[0]===page)?.[1] || "WorkHub";
   return <div className="app-shell">
-    <aside className={mobile ? "open" : ""}><div className="logo"><img className="med360-logo sidebar-logo" src="/med360-logo.png" alt="Med 360+" /><div><strong>WorkHub</strong><span>Employee workspace</span></div><button className="icon-button close-nav" onClick={()=>setMobile(false)}><X/></button></div>
+    <aside className={mobile ? "open" : ""}><div className="logo"><img className="launcher-mark sidebar-launcher" src="/med360-launcher.svg" alt="Med 360+" /><div><strong>WorkHub</strong><span>Med 360+ workspace</span></div><button className="icon-button close-nav" onClick={()=>setMobile(false)}><X/></button></div>
       <nav>{nav.filter(x=>!x[3]||admin).map(([key,label,Icon])=><button key={key} className={page===key?"active":""} onClick={()=>{setPage(key);setMobile(false)}}><Icon/>{label}{key==="announcements"&&data.overview.unread_announcements>0&&<i>{data.overview.unread_announcements}</i>}</button>)}</nav>
       <div className="sidebar-user"><div className="avatar">{auth.user.username.slice(0,2).toUpperCase()}</div><div><strong>{auth.user.username}</strong><span>{auth.user.role}</span></div><button className="icon-button" onClick={logout}><LogOut/></button></div>
     </aside>
