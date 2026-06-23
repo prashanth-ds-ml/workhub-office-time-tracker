@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   Activity, BarChart3, Bell, BriefcaseBusiness, CalendarDays, ChevronLeft,
-  ChevronRight, CircleStop, Clock3, Coffee, Download, Gauge, LogOut, Menu,
-  Megaphone, Play, Plus, RefreshCw, Settings2, ShieldCheck, Users, X
+  ChevronRight, ChevronsLeft, ChevronsRight, CircleStop, Clock3, Coffee,
+  Download, Gauge, LogOut, Menu, Megaphone, Play, Plus, RefreshCw, Settings2,
+  ShieldCheck, Users, X
 } from "lucide-react";
 
 const API_URL = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
+const INDIA_TIME_ZONE = "Asia/Kolkata";
 const eventColors = {
   WORKING_DAY: "blue", HALF_DAY: "amber", FULL_DAY_SATURDAY: "teal",
   HOLIDAY: "purple", COMP_OFF: "pink", LONG_WEEKEND: "red", COMPANY_EVENT: "cyan"
@@ -16,12 +18,42 @@ const nav = [
   ["employees", "Employees", Users, true], ["policies", "Policies", Settings2, true],
   ["reports", "Reports", BarChart3, true]
 ];
+const dateFormatter = (options = {}) => new Intl.DateTimeFormat("en-IN", { timeZone: INDIA_TIME_ZONE, ...options });
+const indiaParts = (value = new Date()) => {
+  const parts = dateFormatter({
+    year: "numeric", month: "2-digit", day: "2-digit"
+  }).formatToParts(new Date(value));
+  return Object.fromEntries(parts.filter(part => part.type !== "literal").map(part => [part.type, part.value]));
+};
+const today = () => {
+  const { year, month, day } = indiaParts();
+  return `${year}-${month}-${day}`;
+};
+const currentMonth = () => today().slice(0, 7);
+const monthTitle = key => dateFormatter({ month: "long", year: "numeric" }).format(new Date(`${key}-01T12:00:00Z`));
+const indiaDateLabel = value => dateFormatter({ weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(new Date(value));
+const indiaTimeLabel = value => dateFormatter({ hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true }).format(new Date(value));
+const formatDuration = ms => {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const hours = String(Math.floor(total / 3600)).padStart(2, "0");
+  const minutes = String(Math.floor(total % 3600 / 60)).padStart(2, "0");
+  const seconds = String(total % 60).padStart(2, "0");
+  return `${hours}:${minutes}:${seconds}`;
+};
+const parseDate = value => new Date(value);
+const elapsedMs = (start, end) => Math.max(0, parseDate(end).getTime() - parseDate(start).getTime());
+const shiftMonth = (month, delta) => {
+  const [year, monthIndex] = month.split("-").map(Number);
+  return new Date(Date.UTC(year, monthIndex - 1 + delta, 1)).toISOString().slice(0, 7);
+};
+const shiftYear = (month, delta) => {
+  const [year, monthIndex] = month.split("-").map(Number);
+  return new Date(Date.UTC(year + delta, monthIndex - 1, 1)).toISOString().slice(0, 7);
+};
 const mins = value => {
   const n = Math.max(0, Number(value || 0));
   return `${Math.floor(n / 60)}h ${Math.round(n % 60)}m`;
 };
-const monthTitle = key => new Date(`${key}-02T00:00:00`).toLocaleDateString(undefined, { month: "long", year: "numeric" });
-const today = () => new Date().toISOString().slice(0, 10);
 const COMPANY_DOMAIN = "sims.healthcare";
 const companyEmail = value => value.trim().toLowerCase().endsWith(`@${COMPANY_DOMAIN}`);
 const readStoredJson = (storage, key) => {
@@ -104,20 +136,30 @@ function Stat({ label, value, hint, tone = "blue", icon: Icon = Activity }) {
 }
 
 function Calendar({ events, month, setMonth, onAdd, admin }) {
-  const first = new Date(`${month}-01T00:00:00`), start = (first.getDay() + 6) % 7;
-  const count = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+  const [animKey, setAnimKey] = useState(0);
+  useEffect(() => { setAnimKey(key => key + 1); }, [month]);
+  const [year, monthIndex] = month.split("-").map(Number);
+  const first = new Date(Date.UTC(year, monthIndex - 1, 1));
+  const start = (first.getUTCDay() + 6) % 7;
+  const count = new Date(Date.UTC(year, monthIndex, 0)).getUTCDate();
   const map = Object.fromEntries(events.map(e => [e.date, e]));
-  const shift = delta => { const d = new Date(first); d.setMonth(d.getMonth() + delta); setMonth(d.toISOString().slice(0, 7)); };
-  return <section className="panel calendar-panel">
+  return <section className="panel calendar-panel calendar-swap" key={animKey}>
     <div className="panel-head"><div><h3>{monthTitle(month)}</h3><p>Company schedule and attendance expectations</p></div>
-      <div className="actions"><button className="icon-button" onClick={() => shift(-1)}><ChevronLeft /></button><button className="ghost" onClick={() => setMonth(today().slice(0, 7))}>Today</button><button className="icon-button" onClick={() => shift(1)}><ChevronRight /></button>{admin && <button className="primary" onClick={onAdd}><Plus /> Add event</button>}</div>
+      <div className="actions">
+        <button className="icon-button" onClick={() => setMonth(shiftYear(month, -1))} title="Previous year"><ChevronsLeft /></button>
+        <button className="icon-button" onClick={() => setMonth(shiftMonth(month, -1))} title="Previous month"><ChevronLeft /></button>
+        <button className="ghost" onClick={() => setMonth(currentMonth())}>Today</button>
+        <button className="icon-button" onClick={() => setMonth(shiftMonth(month, 1))} title="Next month"><ChevronRight /></button>
+        <button className="icon-button" onClick={() => setMonth(shiftYear(month, 1))} title="Next year"><ChevronsRight /></button>
+        {admin && <button className="primary" onClick={onAdd}><Plus /> Add event</button>}
+      </div>
     </div>
     <div className="weekdays">{["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(x => <span key={x}>{x}</span>)}</div>
     <div className="calendar-grid">
       {Array.from({ length: start }).map((_, i) => <div className="day empty" key={`e${i}`} />)}
       {Array.from({ length: count }).map((_, i) => {
         const date = `${month}-${String(i + 1).padStart(2, "0")}`, event = map[date];
-        return <div className={`day ${date === today() ? "current" : ""}`} key={date}><b>{i + 1}</b>
+        return <div className={`day ${date === currentMonth() ? "current" : ""}`} key={date}><b>{i + 1}</b>
           {event && <span className={`event ${eventColors[event.event_type] || "blue"}`} title={event.description}>{event.title}</span>}
         </div>;
       })}
@@ -125,11 +167,25 @@ function Calendar({ events, month, setMonth, onAdd, admin }) {
   </section>;
 }
 
-function Dashboard({ overview, analytics, admin }) {
+function Dashboard({ overview, analytics, admin, clockTick }) {
   const t = overview.today || {}, summary = overview.month_summary || {}, policy = t.policy || {};
-  return <><div className="hero-row"><div><span className="eyebrow">{new Date().toLocaleDateString(undefined, { weekday:"long", month:"long", day:"numeric" }).toUpperCase()}</span>
-    <h2>{t.calendar_event?.title || "Your workday"}</h2><p>{t.calendar_event?.description || "Stay focused and make today count."}</p></div>
-    <div className={`day-pill ${eventColors[t.calendar_event?.event_type] || "blue"}`}>{(t.calendar_event?.event_type || "WORKING DAY").replaceAll("_", " ")}</div></div>
+  const upcomingHolidays = overview.upcoming_holidays || [];
+  const liveSession = t.session;
+  const liveTimerMs = liveSession
+    ? elapsedMs(liveSession.start, liveSession.active_break?.start || clockTick)
+      - (liveSession.breaks || []).reduce((sum, brk) => brk.end ? sum + elapsedMs(brk.start, brk.end) : sum, 0)
+      - (liveSession.active_break ? elapsedMs(liveSession.active_break.start, clockTick) : 0)
+    : 0;
+  const liveTimer = formatDuration(liveTimerMs);
+  return <>
+    <div className="hero-row">
+      <div>
+        <span className="eyebrow">{indiaDateLabel(clockTick).toUpperCase()}</span>
+        <h2>{t.calendar_event?.title || "Your workday"}</h2>
+        <p>{t.calendar_event?.description || "Stay focused and make today count."}</p>
+      </div>
+      <div className={`day-pill ${eventColors[t.calendar_event?.event_type] || "blue"}`}>{(t.calendar_event?.event_type || "WORKING DAY").replaceAll("_", " ")}</div>
+    </div>
     <div className="stats">
       <Stat label="Work completed" value={mins(t.work_done_minutes)} hint={`${mins(t.remaining_minutes)} remaining`} icon={Clock3} />
       <Stat label="Break used" value={mins(t.breaks_used_minutes)} hint={`${mins(t.break_remaining_minutes)} available`} tone="amber" icon={Coffee} />
@@ -137,16 +193,34 @@ function Dashboard({ overview, analytics, admin }) {
       <Stat label={admin ? "Team work total" : "Target today"} value={admin ? mins(analytics?.summary?.total_work_minutes) : `${policy.target_work_hours || 0}h`} hint={admin ? `${analytics?.summary?.active_employees || 0} active employees` : `${policy.max_break_minutes || 0}m break allowance`} tone="purple" icon={admin ? Users : Gauge} />
     </div>
     <div className="two-col">
-      <section className="panel"><div className="panel-head"><div><h3>Month at a glance</h3><p>{monthTitle(overview.month)}</p></div></div>
+      <section className="panel">
+        <div className="panel-head"><div><h3>Month at a glance</h3><p>{monthTitle(overview.month)}</p></div></div>
         <div className="summary-list">{[
-          ["Working days", summary.working_days], ["Completed", summary.completed], ["Remaining", summary.remaining_working_days],
-          ["Holidays", summary.holidays], ["Half days", summary.half_days], ["Long weekends", summary.long_weekends]
+          ["Working days", summary.working_days], ["Completed", summary.completed], ["Workdays left", summary.remaining_working_days],
+          ["Days left in month", summary.days_left_in_month], ["Holidays", summary.holidays], ["Half days", summary.half_days], ["Long weekends", summary.long_weekends]
         ].map(([a,b]) => <div key={a}><span>{a}</span><strong>{b || 0}</strong></div>)}</div>
       </section>
-      <section className="panel"><div className="panel-head"><div><h3>Latest announcements</h3><p>Updates from your company</p></div></div>
+      <section className="panel">
+        <div className="panel-head"><div><h3>Latest announcements</h3><p>Updates from your company</p></div></div>
         <div className="feed">{overview.announcements?.slice(0,4).map(a => <article key={a.id}><div className="feed-icon"><Megaphone /></div><div><strong>{a.title}</strong><p>{a.content}</p><small>{a.effective_date}</small></div></article>)}{!overview.announcements?.length && <div className="empty-state">No announcements yet.</div>}</div>
       </section>
-    </div></>;
+    </div>
+    <section className="panel upcoming-panel">
+      <div className="panel-head"><div><h3>Upcoming holidays</h3><p>Next off-days in Indian time</p></div></div>
+      <div className="upcoming-grid">
+        {upcomingHolidays.length ? upcomingHolidays.map(item => (
+          <article key={`${item.date}-${item.title}`}>
+            <div className={`feed-icon ${eventColors[item.event_type] || "purple"}`}><CalendarDays /></div>
+            <div>
+              <strong>{item.title}</strong>
+              <p>{item.date}</p>
+              <small>{item.days_until === 0 ? "Today" : `${item.days_until} day${item.days_until === 1 ? "" : "s"} away`}</small>
+            </div>
+          </article>
+        )) : <div className="empty-state">No upcoming holidays found.</div>}
+      </div>
+    </section>
+  </>;
 }
 
 function Forms({ type, token, users, policy, onDone, onClose }) {
@@ -181,6 +255,7 @@ export default function App() {
       || { overview:null, employees:[], analytics:null, policy:null, sessions:[], announcements:[] };
   });
   const [busy, setBusy] = useState(false), [error, setError] = useState(""), [modal, setModal] = useState(null), [mobile, setMobile] = useState(false);
+  const [clockTick, setClockTick] = useState(() => Date.now());
   const admin = auth?.user?.role === "Admin";
   const acceptAuth = value => {
     localStorage.setItem("workhub_user", JSON.stringify(value.user));
@@ -212,8 +287,16 @@ export default function App() {
     document.addEventListener("visibilitychange", refreshVisibleWorkspace);
     return () => document.removeEventListener("visibilitychange", refreshVisibleWorkspace);
   }, [load]);
+  useEffect(() => {
+    const timer = setInterval(() => setClockTick(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
   const action = async kind => {
     const session = data.overview?.today?.session, id = session?.id;
+    if (kind !== "start" && !id) {
+      setError("No active session is available for that action.");
+      return;
+    }
     const path = kind === "start" ? `/sessions/${auth.user.id}/start` : kind === "stop" ? `/sessions/${id}/stop` : kind === "break" ? `/sessions/${id}/break/start` : `/sessions/${id}/break/stop`;
     setBusy(true); try { await api(path,{token:auth.token,method:"POST"}); await load(); } catch(err){ setError(err.message); } finally{setBusy(false);}
   };
@@ -222,6 +305,14 @@ export default function App() {
   if (!auth) return <Auth onAuth={acceptAuth} />;
   if (!data.overview) return <div className="loading-screen"><RefreshCw className="spin"/><h2>Opening your workspace</h2><p>Free hosting may take up to 90 seconds to wake.</p>{error&&<div className="error">{error}</div>}</div>;
   const session = data.overview.today?.session, active = session?.is_active, onBreak = session?.active_break;
+  const clockBadge = `${indiaDateLabel(clockTick)} · ${indiaTimeLabel(clockTick)} IST`;
+  const liveSession = session;
+  const liveTimerMs = liveSession
+    ? elapsedMs(liveSession.start, liveSession.active_break?.start || clockTick)
+      - (liveSession.breaks || []).reduce((sum, brk) => brk.end ? sum + elapsedMs(brk.start, brk.end) : sum, 0)
+      - (liveSession.active_break ? elapsedMs(liveSession.active_break.start, clockTick) : 0)
+    : 0;
+  const liveTimer = formatDuration(liveTimerMs);
   const title = nav.find(x=>x[0]===page)?.[1] || "WorkHub";
   return <div className="app-shell">
     <aside className={mobile ? "open" : ""}><div className="logo"><img className="launcher-mark sidebar-launcher" src="/med360-launcher.svg" alt="Med 360+" /><div><strong>WorkHub</strong><span>Med 360+ workspace</span></div><button className="icon-button close-nav" onClick={()=>setMobile(false)}><X/></button></div>
@@ -229,9 +320,9 @@ export default function App() {
       <div className="sidebar-user"><div className="avatar">{auth.user.username.slice(0,2).toUpperCase()}</div><div><strong>{auth.user.username}</strong><span>{auth.user.role}</span></div><button className="icon-button" onClick={logout}><LogOut/></button></div>
     </aside>
     <main><header className="topbar"><button className="icon-button menu" onClick={()=>setMobile(true)}><Menu/></button><div><h1>{title}</h1><p>{admin ? "Admin console" : "Employee workspace"}</p></div>
-      <div className="top-actions"><span className="connected"><i/> API connected</span><button className="icon-button" onClick={load}><RefreshCw className={busy?"spin":""}/></button></div></header>
+      <div className="top-actions"><span className="connected"><i/> API connected · {clockBadge}</span><button className="icon-button" onClick={load}><RefreshCw className={busy?"spin":""}/></button></div></header>
       <div className="content">{error&&<div className="banner error">{error}<button onClick={()=>setError("")}><X/></button></div>}
-        {page==="dashboard"&&<Dashboard overview={data.overview} analytics={data.analytics} admin={admin}/>}
+        {page==="dashboard"&&<Dashboard overview={data.overview} analytics={data.analytics} admin={admin} clockTick={clockTick}/>}
         {page==="calendar"&&<Calendar events={data.overview.calendar_month||[]} month={month} setMonth={setMonth} admin={admin} onAdd={()=>setModal("event")}/>}
         {page==="attendance"&&<section className="panel"><div className="panel-head"><div><h3>Attendance history</h3><p>Your recorded work sessions</p></div></div><div className="table-wrap"><table><thead><tr><th>Date</th><th>Started</th><th>Ended</th><th>Work</th><th>Break</th><th>Status</th></tr></thead><tbody>{data.sessions.map(s=><tr key={s.id}><td>{new Date(s.start).toLocaleDateString()}</td><td>{new Date(s.start).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</td><td>{s.end?new Date(s.end).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):"—"}</td><td>{mins(s.work_minutes)}</td><td>{mins(s.break_minutes)}</td><td><span className={`status ${s.is_active?"green":"gray"}`}>{s.is_active?"Active":"Completed"}</span></td></tr>)}</tbody></table></div></section>}
         {page==="announcements"&&<section className="panel"><div className="panel-head"><div><h3>Company announcements</h3><p>Important news and team updates</p></div>{admin&&<button className="primary" onClick={()=>setModal("announcement")}><Plus/> Post announcement</button>}</div><div className="announcement-grid">{data.announcements.map(a=><article className={a.is_read?"read":""} key={a.id}><div className="feed-icon"><Megaphone/></div><div><small>{a.effective_date}</small><h3>{a.title}</h3><p>{a.content}</p>{!a.is_read&&<button className="text-button" onClick={()=>markRead(a.id)}>Mark as read</button>}</div></article>)}</div></section>}
@@ -239,7 +330,7 @@ export default function App() {
         {page==="policies"&&admin&&<section className="panel"><div className="panel-head"><div><h3>Company work policy</h3><p>Applied to every employee</p></div><button className="primary" onClick={()=>setModal("policy")}><Settings2/> Edit policy</button></div><div className="policy-grid"><Stat label="Office hours" value={`${data.policy?.office_hours?.start||"—"} – ${data.policy?.office_hours?.end||"—"}`} hint="standard working window" icon={Clock3}/>{Object.entries(data.policy?.rules||{}).map(([k,v])=><Stat key={k} label={k.replaceAll("_"," ")} value={k.includes("hours")?`${v}h`:`${v}m`} hint="company-wide rule" tone="purple" icon={ShieldCheck}/>)}</div></section>}
         {page==="reports"&&admin&&<section className="panel"><div className="panel-head"><div><h3>Employee analytics · {monthTitle(month)}</h3><p>Work and break totals for the selected month</p></div><button className="ghost" onClick={()=>window.print()}><Download/> Export / Print</button></div><div className="stats compact"><Stat label="Active employees" value={data.analytics?.summary?.active_employees||0} icon={Users}/><Stat label="Average work/day" value={mins(data.analytics?.summary?.average_work_minutes)} tone="green" icon={Clock3}/><Stat label="Average break/day" value={mins(data.analytics?.summary?.average_break_minutes)} tone="amber" icon={Coffee}/></div><div className="table-wrap"><table><thead><tr><th>Employee</th><th>Days</th><th>Avg work</th><th>Avg break</th><th>Total work</th><th>Completion</th></tr></thead><tbody>{data.analytics?.employees?.map(e=><tr key={e.user_id}><td><strong>{e.username}</strong><small>{e.role}</small></td><td>{e.days_worked}</td><td>{mins(e.average_work_minutes)}</td><td>{mins(e.average_break_minutes)}</td><td>{mins(e.total_work_minutes)}</td><td>{e.completion_rate}%</td></tr>)}</tbody></table></div></section>}
       </div>
-      <div className="tracker-bar"><div><span className={`pulse ${active?"on":""}`}/><div><strong>{onBreak?"On break":active?"Work session active":"Ready to start"}</strong><small>{active?`${mins(data.overview.today.work_done_minutes)} focused today`:"Start when your workday begins"}</small></div></div><div className="actions">{!active?<button className="primary" onClick={()=>action("start")}><Play/> Start work</button>:onBreak?<><button className="primary" onClick={()=>action("resume")}><Play/> Resume work</button><button className="danger" onClick={()=>action("stop")}><CircleStop/> Stop work</button></>:<><button className="ghost" onClick={()=>action("break")}><Coffee/> Start break</button><button className="danger" onClick={()=>action("stop")}><CircleStop/> Stop work</button></>}</div></div>
+      <div className="tracker-bar"><div><span className={`pulse ${active?"on":""}`}/><div><strong>{onBreak?"On break":active?"Work session active":"Ready to start"}</strong><small>{active?`${mins(data.overview.today.work_done_minutes)} focused today`:"Start when your workday begins"}</small></div><div className="live-timer"><span>Live timer</span><strong>{liveTimer}</strong><small>{active ? (onBreak ? "Break paused from focus time" : "Counting active work time") : "Waiting to start"}</small></div></div><div className="actions">{!active?<button className="primary" onClick={()=>action("start")}><Play/> Start work</button>:onBreak?<><button className="primary" onClick={()=>action("resume")}><Play/> Resume work</button><button className="danger" onClick={()=>action("stop")}><CircleStop/> Stop work</button></>:<><button className="ghost" onClick={()=>action("break")}><Coffee/> Start break</button><button className="danger" onClick={()=>action("stop")}><CircleStop/> Stop work</button></>}</div></div>
     </main>
     {modal&&<Modal title={{event:"Add calendar event",announcement:"Post announcement",employee:"Add employee",policy:"Edit company policy"}[modal]} onClose={()=>setModal(null)}><Forms type={modal} token={auth.token} users={data.employees} policy={data.policy} onDone={load} onClose={()=>setModal(null)}/></Modal>}
   </div>;

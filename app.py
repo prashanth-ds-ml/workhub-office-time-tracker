@@ -18,7 +18,7 @@ import threading
 import time
 import uuid
 from collections import defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -38,6 +38,8 @@ load_dotenv()
 
 app = FastAPI(title="Office Time Tracker API")
 bearer_scheme = HTTPBearer(auto_error=False)
+UTC = timezone.utc
+INDIA_TZ = timezone(timedelta(hours=5, minutes=30))
 
 WORKHUB_ENV = os.getenv("WORKHUB_ENV", "development").lower()
 JWT_SECRET = os.getenv("WORKHUB_JWT_SECRET", "development-only-change-me")
@@ -194,11 +196,49 @@ DEFAULT_COMPANY_WORK_POLICY: Dict[str, Any] = {
 
 
 def _now() -> datetime:
-    return datetime.utcnow()
+    return datetime.now(UTC)
 
 
 def _iso_now() -> str:
     return _now().isoformat()
+
+
+def _ensure_utc(value: Optional[datetime]) -> Optional[datetime]:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _ist_date(value: datetime) -> date:
+    return _ensure_utc(value).astimezone(INDIA_TZ).date()
+
+
+def _ist_today(reference: Optional[datetime] = None) -> date:
+    return (reference or _now()).astimezone(INDIA_TZ).date()
+
+
+def _session_day(session: Session) -> date:
+    return _ist_date(session.start)
+
+
+def _serialize_datetime(value: Optional[datetime]) -> Optional[str]:
+    if value is None:
+        return None
+    return _ensure_utc(value).isoformat()
+
+
+def _normalize_session(session: Session) -> Session:
+    session.start = _ensure_utc(session.start)  # type: ignore[assignment]
+    session.end = _ensure_utc(session.end) if session.end else None  # type: ignore[assignment]
+    return session
+
+
+def _normalize_break(brk: Break) -> Break:
+    brk.start = _ensure_utc(brk.start)  # type: ignore[assignment]
+    brk.end = _ensure_utc(brk.end) if brk.end else None  # type: ignore[assignment]
+    return brk
 
 
 def _hash_password(password: str) -> str:
@@ -554,8 +594,8 @@ def _refresh_cache(force: bool = False) -> None:
         if not force and now - _cache_refreshed_at < _CACHE_TTL_SECONDS:
             return
         loaded_users = [User(**row) for row in _load_json(USERS_FILE)]
-        loaded_sessions = [Session(**row) for row in _load_json(SESSIONS_FILE)]
-        loaded_breaks = [Break(**row) for row in _load_json(BREAKS_FILE)]
+        loaded_sessions = [_normalize_session(Session(**row)) for row in _load_json(SESSIONS_FILE)]
+        loaded_breaks = [_normalize_break(Break(**row)) for row in _load_json(BREAKS_FILE)]
         loaded_calendar_events = [
             CalendarEvent(**row) for row in _load_json(CALENDAR_EVENTS_FILE)
         ]
@@ -705,8 +745,8 @@ def _sync_session_breaks(session: Session) -> None:
     session.breaks = [
         {
             "id": brk.id,
-            "start": brk.start.isoformat() if isinstance(brk.start, datetime) else brk.start,
-            "end": brk.end.isoformat() if isinstance(brk.end, datetime) else brk.end,
+            "start": _serialize_datetime(brk.start),
+            "end": _serialize_datetime(brk.end),
         }
         for brk in breaks_cache
         if brk.session_id == session.id
@@ -718,21 +758,21 @@ def _session_break_minutes(session: Session) -> float:
     for brk in breaks_cache:
         if brk.session_id != session.id or brk.end is None:
             continue
-        total += (brk.end - brk.start).total_seconds() / 60
+        total += (_ensure_utc(brk.end) - _ensure_utc(brk.start)).total_seconds() / 60
     return total
 
 
 def _session_work_minutes(session: Session, reference: Optional[datetime] = None) -> float:
-    reference = reference or _now()
-    end = session.end or reference
-    total = (end - session.start).total_seconds() / 60
+    reference = _ensure_utc(reference or _now())
+    end = _ensure_utc(session.end) or reference
+    total = (end - _ensure_utc(session.start)).total_seconds() / 60
     active_break = next(
         (brk for brk in breaks_cache if brk.session_id == session.id and brk.end is None),
         None,
     )
     active_break_minutes = 0.0
     if active_break:
-        active_break_minutes = max(0.0, (reference - active_break.start).total_seconds() / 60)
+        active_break_minutes = max(0.0, (reference - _ensure_utc(active_break.start)).total_seconds() / 60)
     return max(0.0, total - _session_break_minutes(session) - active_break_minutes)
 
 
@@ -748,6 +788,8 @@ def _session_view(session: Session) -> Dict[str, Any]:
         "break_minutes": round(_session_break_minutes(session), 2),
         "active_break": active_break.dict() if active_break else None,
         "is_active": session.end is None,
+        "start": _serialize_datetime(session.start),
+        "end": _serialize_datetime(session.end),
     }
 
 
@@ -755,8 +797,8 @@ def _break_view(brk: Break) -> Dict[str, Any]:
     return {
         "id": brk.id,
         "session_id": brk.session_id,
-        "start": brk.start.isoformat() if isinstance(brk.start, datetime) else brk.start,
-        "end": brk.end.isoformat() if isinstance(brk.end, datetime) else brk.end,
+        "start": _serialize_datetime(brk.start),
+        "end": _serialize_datetime(brk.end),
     }
 
 
@@ -771,7 +813,7 @@ def _user_summary(user: User) -> Dict[str, Any]:
 
 
 def _find_session_for_user(user_id: str, target_date: date) -> Optional[Session]:
-    candidates = [session for session in sessions_cache if session.user_id == user_id and session.start.date() == target_date]
+    candidates = [session for session in sessions_cache if session.user_id == user_id and _session_day(session) == target_date]
     if candidates:
         candidates.sort(key=lambda item: item.start, reverse=True)
         return candidates[0]
@@ -942,7 +984,7 @@ def _count_workdays(month_events: List[Dict[str, Any]]) -> int:
 
 
 def _current_month_label(today: Optional[date] = None) -> str:
-    today = today or _now().date()
+    today = today or _ist_today()
     return today.strftime("%Y-%m")
 
 
@@ -995,17 +1037,17 @@ def _attendance_summary_for_date(user: User, target_date: date) -> Dict[str, Any
 
 
 def _dashboard_overview(user: User, month: str) -> Dict[str, Any]:
-    today = _now().date()
+    today = _ist_today()
     month_events = _month_calendar(month)
     long_weekends = _derive_long_weekends(month_events)
     attendance_today = _attendance_summary_for_date(user, today)
 
     sessions_for_month = [
-        session for session in sessions_cache if session.user_id == user.id and session.start.date().strftime("%Y-%m") == month
+        session for session in sessions_cache if session.user_id == user.id and _session_day(session).strftime("%Y-%m") == month
     ]
     month_sessions_by_day: Dict[str, float] = defaultdict(float)
     for session in sessions_for_month:
-        day_key = session.start.date().isoformat()
+        day_key = _session_day(session).isoformat()
         month_sessions_by_day[day_key] = max(
             month_sessions_by_day[day_key],
             _session_work_minutes(session),
@@ -1034,10 +1076,7 @@ def _dashboard_overview(user: User, month: str) -> Dict[str, Any]:
         1 for event in attendance_days if date.fromisoformat(event["date"]) > today
     )
 
-    upcoming_events = [
-        _calendar_event_for_date(today + timedelta(days=offset))
-        for offset in range(1, 60)
-    ]
+    upcoming_events = [_calendar_event_for_date(today + timedelta(days=offset)) for offset in range(1, 90)]
     next_holiday = next((event for event in upcoming_events if event["event_type"] == "HOLIDAY"), None)
     next_half_day = next((event for event in upcoming_events if event["event_type"] == "HALF_DAY"), None)
     next_company_holiday = next(
@@ -1062,6 +1101,16 @@ def _dashboard_overview(user: User, month: str) -> Dict[str, Any]:
         ),
         None,
     )
+    upcoming_holidays = [
+        {
+            "date": event["date"],
+            "title": event["title"],
+            "event_type": event["event_type"],
+            "days_until": (date.fromisoformat(event["date"]) - today).days,
+        }
+        for event in upcoming_events
+        if event["event_type"] in {"HOLIDAY", "COMP_OFF", "LONG_WEEKEND", "HALF_DAY"}
+    ][:6]
 
     unread_count = sum(
         1 for announcement in announcements_cache if not _read_status_for_user(announcement.id, user.id)
@@ -1078,6 +1127,7 @@ def _dashboard_overview(user: User, month: str) -> Dict[str, Any]:
             "remaining": max(0, len(working_days) + len(half_days) - completed),
             "elapsed_working_days": elapsed_working_days,
             "remaining_working_days": remaining_working_days,
+            "days_left_in_month": max(0, calendar.monthrange(today.year, today.month)[1] - today.day),
             "holidays": len(holidays),
             "company_holidays": len(company_holidays),
             "comp_offs": len(comp_offs),
@@ -1093,6 +1143,7 @@ def _dashboard_overview(user: User, month: str) -> Dict[str, Any]:
             "next_company_holiday": next_company_holiday.dict() if next_company_holiday else None,
             "next_company_event": next_company_event.dict() if next_company_event else None,
         },
+        "upcoming_holidays": upcoming_holidays,
         "announcements": [
             {**announcement.dict(), "is_read": _read_status_for_user(announcement.id, user.id)}
             for announcement in sorted(announcements_cache, key=lambda row: row.created_at, reverse=True)
@@ -1430,7 +1481,7 @@ def get_calendar_event(
 
 @app.get("/calendar/today")
 def get_calendar_today(current_user: User = Depends(get_current_user)) -> Dict[str, Any]:
-    return _calendar_event_to_summary(_calendar_event_for_date(_now().date()))
+    return _calendar_event_to_summary(_calendar_event_for_date(_ist_today()))
 
 
 @app.get("/calendar/events")
@@ -1540,7 +1591,7 @@ def create_announcement(
     announcement = Announcement(
         title=payload.title.strip(),
         content=payload.content.strip(),
-        effective_date=payload.effective_date or _now().date().isoformat(),
+        effective_date=payload.effective_date or _ist_today().isoformat(),
     )
     announcements_cache.append(announcement)
     _upsert_models(ANNOUNCEMENTS_FILE, [announcement])
@@ -1583,7 +1634,7 @@ def get_attendance_for_date(
 
 @app.get("/attendance/today")
 def get_attendance_today(current_user: User = Depends(get_current_user)) -> Dict[str, Any]:
-    return _attendance_summary_for_date(current_user, _now().date())
+    return _attendance_summary_for_date(current_user, _ist_today())
 
 
 @app.get("/dashboard/overview")
@@ -1624,12 +1675,12 @@ def _admin_analytics(selected_month: str) -> Dict[str, Any]:
         user_sessions = [
             session
             for session in sessions_cache
-            if session.user_id == user.id and session.start.date().strftime("%Y-%m") == selected_month
+            if session.user_id == user.id and _session_day(session).strftime("%Y-%m") == selected_month
         ]
         work_by_day: Dict[str, float] = defaultdict(float)
         break_by_day: Dict[str, float] = defaultdict(float)
         for session in user_sessions:
-            day_key = session.start.date().isoformat()
+            day_key = _session_day(session).isoformat()
             work_by_day[day_key] += _session_work_minutes(session)
             break_by_day[day_key] += _session_break_minutes(session)
 
