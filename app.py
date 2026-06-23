@@ -38,8 +38,8 @@ load_dotenv()
 
 app = FastAPI(title="Office Time Tracker API")
 bearer_scheme = HTTPBearer(auto_error=False)
-UTC = timezone.utc
 INDIA_TZ = timezone(timedelta(hours=5, minutes=30))
+UTC = timezone.utc
 
 WORKHUB_ENV = os.getenv("WORKHUB_ENV", "development").lower()
 JWT_SECRET = os.getenv("WORKHUB_JWT_SECRET", "development-only-change-me")
@@ -196,23 +196,23 @@ DEFAULT_COMPANY_WORK_POLICY: Dict[str, Any] = {
 
 
 def _now() -> datetime:
-    return datetime.now(UTC)
+    return datetime.now(INDIA_TZ)
 
 
 def _iso_now() -> str:
     return _now().isoformat()
 
 
-def _ensure_utc(value: Optional[datetime]) -> Optional[datetime]:
+def _ensure_ist(value: Optional[datetime]) -> Optional[datetime]:
     if value is None:
         return None
     if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value.astimezone(UTC)
+        return value.replace(tzinfo=UTC).astimezone(INDIA_TZ)
+    return value.astimezone(INDIA_TZ)
 
 
 def _ist_date(value: datetime) -> date:
-    return _ensure_utc(value).astimezone(INDIA_TZ).date()
+    return _ensure_ist(value).date()
 
 
 def _ist_today(reference: Optional[datetime] = None) -> date:
@@ -226,19 +226,79 @@ def _session_day(session: Session) -> date:
 def _serialize_datetime(value: Optional[datetime]) -> Optional[str]:
     if value is None:
         return None
-    return _ensure_utc(value).isoformat()
+    return _ensure_ist(value).isoformat()
 
 
 def _normalize_session(session: Session) -> Session:
-    session.start = _ensure_utc(session.start)  # type: ignore[assignment]
-    session.end = _ensure_utc(session.end) if session.end else None  # type: ignore[assignment]
+    session.start = _ensure_ist(session.start)  # type: ignore[assignment]
+    session.end = _ensure_ist(session.end) if session.end else None  # type: ignore[assignment]
     return session
 
 
 def _normalize_break(brk: Break) -> Break:
-    brk.start = _ensure_utc(brk.start)  # type: ignore[assignment]
-    brk.end = _ensure_utc(brk.end) if brk.end else None  # type: ignore[assignment]
+    brk.start = _ensure_ist(brk.start)  # type: ignore[assignment]
+    brk.end = _ensure_ist(brk.end) if brk.end else None  # type: ignore[assignment]
     return brk
+
+
+def _normalize_timestamp_string(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return value
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return value
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(INDIA_TZ).isoformat()
+
+
+def _migrate_cached_timestamps_to_ist() -> bool:
+    changed = False
+    for session in sessions_cache:
+        start = _ensure_ist(session.start)
+        end = _ensure_ist(session.end) if session.end else None
+        if start != session.start or end != session.end:
+            session.start = start  # type: ignore[assignment]
+            session.end = end  # type: ignore[assignment]
+            changed = True
+    for brk in breaks_cache:
+        start = _ensure_ist(brk.start)
+        end = _ensure_ist(brk.end) if brk.end else None
+        if start != brk.start or end != brk.end:
+            brk.start = start  # type: ignore[assignment]
+            brk.end = end  # type: ignore[assignment]
+            changed = True
+    for event in calendar_events_cache:
+        created_at = _normalize_timestamp_string(event.created_at)
+        updated_at = _normalize_timestamp_string(event.updated_at)
+        if created_at != event.created_at or updated_at != event.updated_at:
+            event.created_at = created_at or event.created_at
+            event.updated_at = updated_at or event.updated_at
+            changed = True
+    for announcement in announcements_cache:
+        created_at = _normalize_timestamp_string(announcement.created_at)
+        if created_at != announcement.created_at:
+            announcement.created_at = created_at or announcement.created_at
+            changed = True
+    for company_event in company_events_cache:
+        created_at = _normalize_timestamp_string(company_event.created_at)
+        if created_at != company_event.created_at:
+            company_event.created_at = created_at or company_event.created_at
+            changed = True
+    for read_row in announcement_reads_cache:
+        read_at = _normalize_timestamp_string(read_row.read_at)
+        if read_at != read_row.read_at:
+            read_row.read_at = read_at
+            changed = True
+    for alert in alert_ack_cache:
+        created_at = _normalize_timestamp_string(alert.created_at)
+        acknowledged_at = _normalize_timestamp_string(alert.acknowledged_at)
+        if created_at != alert.created_at or acknowledged_at != alert.acknowledged_at:
+            alert.created_at = created_at or alert.created_at
+            alert.acknowledged_at = acknowledged_at
+            changed = True
+    return changed
 
 
 def _hash_password(password: str) -> str:
@@ -625,6 +685,8 @@ def _refresh_cache(force: bool = False) -> None:
         company_events_cache = loaded_company_events
         announcement_reads_cache = loaded_reads
         alert_ack_cache = loaded_alerts
+        if _migrate_cached_timestamps_to_ist():
+            _persist_cache()
         _cache_refreshed_at = now
 
 
@@ -758,21 +820,21 @@ def _session_break_minutes(session: Session) -> float:
     for brk in breaks_cache:
         if brk.session_id != session.id or brk.end is None:
             continue
-        total += (_ensure_utc(brk.end) - _ensure_utc(brk.start)).total_seconds() / 60
+        total += (_ensure_ist(brk.end) - _ensure_ist(brk.start)).total_seconds() / 60
     return total
 
 
 def _session_work_minutes(session: Session, reference: Optional[datetime] = None) -> float:
-    reference = _ensure_utc(reference or _now())
-    end = _ensure_utc(session.end) or reference
-    total = (end - _ensure_utc(session.start)).total_seconds() / 60
+    reference = _ensure_ist(reference or _now())
+    end = _ensure_ist(session.end) or reference
+    total = (end - _ensure_ist(session.start)).total_seconds() / 60
     active_break = next(
         (brk for brk in breaks_cache if brk.session_id == session.id and brk.end is None),
         None,
     )
     active_break_minutes = 0.0
     if active_break:
-        active_break_minutes = max(0.0, (reference - _ensure_utc(active_break.start)).total_seconds() / 60)
+        active_break_minutes = max(0.0, (reference - _ensure_ist(active_break.start)).total_seconds() / 60)
     return max(0.0, total - _session_break_minutes(session) - active_break_minutes)
 
 
