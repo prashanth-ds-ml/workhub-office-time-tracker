@@ -233,6 +233,10 @@ def _serialize_datetime(value: Optional[datetime]) -> Optional[str]:
     return _ensure_ist(value).isoformat()
 
 
+def _minutes_between(start: datetime, end: datetime) -> float:
+    return (_ensure_ist(end) - _ensure_ist(start)).total_seconds() / 60
+
+
 def _normalize_session(session: Session) -> Session:
     session.start = _ensure_ist(session.start)  # type: ignore[assignment]
     session.end = _ensure_ist(session.end) if session.end else None  # type: ignore[assignment]
@@ -877,21 +881,21 @@ def _session_break_minutes(session: Session) -> float:
     for brk in breaks_cache:
         if brk.session_id != session.id or brk.end is None:
             continue
-        total += (_ensure_ist(brk.end) - _ensure_ist(brk.start)).total_seconds() / 60
+        total += _minutes_between(brk.start, brk.end)
     return total
 
 
 def _session_work_minutes(session: Session, reference: Optional[datetime] = None) -> float:
     reference = _ensure_ist(reference or _now())
     end = _ensure_ist(session.end) or reference
-    total = (end - _ensure_ist(session.start)).total_seconds() / 60
+    total = _minutes_between(session.start, end)
     active_break = next(
         (brk for brk in breaks_cache if brk.session_id == session.id and brk.end is None),
         None,
     )
     active_break_minutes = 0.0
     if active_break:
-        active_break_minutes = max(0.0, (reference - _ensure_ist(active_break.start)).total_seconds() / 60)
+        active_break_minutes = max(0.0, _minutes_between(active_break.start, reference))
     return max(0.0, total - _session_break_minutes(session) - active_break_minutes)
 
 
