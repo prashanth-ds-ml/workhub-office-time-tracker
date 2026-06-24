@@ -196,7 +196,7 @@ DEFAULT_COMPANY_WORK_POLICY: Dict[str, Any] = {
 
 
 def _now() -> datetime:
-    return datetime.now(INDIA_TZ)
+    return datetime.now(UTC).astimezone(INDIA_TZ)
 
 
 def _iso_now() -> str:

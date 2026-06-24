@@ -136,21 +136,21 @@ function Stat({ label, value, hint, tone = "blue", icon: Icon = Activity }) {
   return <article className="stat-card"><div className={`stat-icon ${tone}`}><Icon /></div><div><span>{label}</span><strong>{value}</strong><small>{hint}</small></div></article>;
 }
 
-function ClockBadge() {
-  const [now, setNow] = useState(() => Date.now());
+function ClockBadge({ serverOffsetMs = 0 }) {
+  const [now, setNow] = useState(() => Date.now() + serverOffsetMs);
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
+    const timer = setInterval(() => setNow(Date.now() + serverOffsetMs), 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [serverOffsetMs]);
   return <span className="connected"><i/> API connected · {indiaDateLabel(now)} · {indiaTimeLabel(now)} IST</span>;
 }
 
-function LiveTimer({ session, active, onBreak }) {
-  const [now, setNow] = useState(() => Date.now());
+function LiveTimer({ session, active, onBreak, serverOffsetMs = 0 }) {
+  const [now, setNow] = useState(() => Date.now() + serverOffsetMs);
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
+    const timer = setInterval(() => setNow(Date.now() + serverOffsetMs), 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [serverOffsetMs]);
   const liveTimerMs = session
     ? elapsedMs(session.start, session.active_break?.start || now)
       - (session.breaks || []).reduce((sum, brk) => brk.end ? sum + elapsedMs(brk.start, brk.end) : sum, 0)
@@ -191,12 +191,12 @@ function Calendar({ events, month, setMonth, onAdd, admin }) {
   </section>;
 }
 
-function Dashboard({ overview }) {
-  const [clockTick, setClockTick] = useState(() => Date.now());
+function Dashboard({ overview, serverOffsetMs = 0 }) {
+  const [clockTick, setClockTick] = useState(() => Date.now() + serverOffsetMs);
   useEffect(() => {
-    const timer = setInterval(() => setClockTick(Date.now()), 1000);
+    const timer = setInterval(() => setClockTick(Date.now() + serverOffsetMs), 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [serverOffsetMs]);
   const t = overview.today || {}, summary = overview.month_summary || {}, policy = t.policy || {};
   const upcomingHolidays = overview.upcoming_holidays || [];
   const liveSession = t.session;
@@ -284,6 +284,7 @@ export default function App() {
       || emptyWorkspace;
   });
   const [busy, setBusy] = useState(false), [sectionBusy, setSectionBusy] = useState(""), [error, setError] = useState(""), [modal, setModal] = useState(null), [mobile, setMobile] = useState(false);
+  const [serverOffsetMs, setServerOffsetMs] = useState(() => Number(sessionStorage.getItem("workhub_server_offset_ms") || 0));
   const admin = auth?.user?.role === "Admin";
   const hasOverview = Boolean(data.overview);
   const acceptAuth = value => {
@@ -303,6 +304,13 @@ export default function App() {
     if (!auth) return; setBusy(true); setError("");
     try {
       const workspace = await api(`/web/bootstrap?month=${month}`, { token: auth.token });
+      if (workspace.generated_at) {
+        const offset = Date.parse(workspace.generated_at) - Date.now();
+        if (Number.isFinite(offset)) {
+          setServerOffsetMs(offset);
+          sessionStorage.setItem("workhub_server_offset_ms", String(offset));
+        }
+      }
       setData(previous => {
         const next = { ...emptyWorkspace, ...previous, ...workspace };
         sessionStorage.setItem(`workhub_data:${auth.user.id}:${month}`, JSON.stringify(next));
@@ -400,10 +408,10 @@ export default function App() {
       <div className="sidebar-user"><div className="avatar">{auth.user.username.slice(0,2).toUpperCase()}</div><div><strong>{auth.user.username}</strong><span>{auth.user.role}</span></div><button className="icon-button" onClick={logout}><LogOut/></button></div>
     </aside>
     <main><header className="topbar"><button className="icon-button menu" onClick={()=>setMobile(true)}><Menu/></button><div><h1>{title}</h1><p>{admin ? "Admin console" : "Employee workspace"}</p></div>
-      <div className="top-actions"><ClockBadge /><button className="icon-button" onClick={load}><RefreshCw className={busy?"spin":""}/></button></div></header>
+      <div className="top-actions"><ClockBadge serverOffsetMs={serverOffsetMs} /><button className="icon-button" onClick={load}><RefreshCw className={busy?"spin":""}/></button></div></header>
       <div className="content">{error&&<div className="banner error">{error}<button onClick={()=>setError("")}><X/></button></div>}
         {sectionBusy===page&&<div className="section-loading"><RefreshCw className="spin"/> Loading {title.toLowerCase()}…</div>}
-        {page==="dashboard"&&<Dashboard overview={data.overview}/>}
+        {page==="dashboard"&&<Dashboard overview={data.overview} serverOffsetMs={serverOffsetMs}/>}
         {page==="calendar"&&<Calendar events={data.overview.calendar_month||[]} month={month} setMonth={setMonth} admin={admin} onAdd={()=>setModal("event")}/>}
         {page==="attendance"&&<section className="panel"><div className="panel-head"><div><h3>Attendance history</h3><p>Your recorded work sessions</p></div></div><div className="table-wrap"><table><thead><tr><th>Date</th><th>Started</th><th>Ended</th><th>Work</th><th>Break</th><th>Status</th></tr></thead><tbody>{data.sessions.map(s=><tr key={s.id}><td>{s.attendance_date || dateFormatter({ day:"2-digit", month:"short", year:"numeric" }).format(new Date(s.start))}</td><td>{s.start_time || dateFormatter({ hour:"2-digit", minute:"2-digit", hour12:true }).format(new Date(s.start))}</td><td>{s.end_time || (s.end?dateFormatter({ hour:"2-digit", minute:"2-digit", hour12:true }).format(new Date(s.end)):"—")}</td><td>{mins(s.work_minutes)}</td><td>{mins(s.break_minutes)}</td><td><span className={`status ${s.is_active?"green":"gray"}`}>{s.is_active?"Active":"Completed"}</span></td></tr>)}</tbody></table></div></section>}
         {page==="announcements"&&<section className="panel"><div className="panel-head"><div><h3>Company announcements</h3><p>Important news and team updates</p></div>{admin&&<button className="primary" onClick={()=>setModal("announcement")}><Plus/> Post announcement</button>}</div><div className="announcement-grid">{data.announcements.map(a=><article className={a.is_read?"read":""} key={a.id}><div className="feed-icon"><Megaphone/></div><div><small>{a.effective_date}</small><h3>{a.title}</h3><p>{a.content}</p>{!a.is_read&&<button className="text-button" onClick={()=>markRead(a.id)}>Mark as read</button>}</div></article>)}</div></section>}
@@ -411,7 +419,7 @@ export default function App() {
         {page==="policies"&&admin&&<section className="panel"><div className="panel-head"><div><h3>Company work policy</h3><p>Applied to every employee</p></div><button className="primary" onClick={()=>setModal("policy")}><Settings2/> Edit policy</button></div><div className="policy-grid"><Stat label="Office hours" value={`${data.policy?.office_hours?.start||"—"} – ${data.policy?.office_hours?.end||"—"}`} hint="standard working window" icon={Clock3}/>{Object.entries(data.policy?.rules||{}).map(([k,v])=><Stat key={k} label={k.replaceAll("_"," ")} value={k.includes("hours")?`${v}h`:`${v}m`} hint="company-wide rule" tone="purple" icon={ShieldCheck}/>)}</div></section>}
         {page==="reports"&&admin&&<section className="panel"><div className="panel-head"><div><h3>Employee analytics · {monthTitle(month)}</h3><p>Work and break totals for the selected month</p></div><button className="ghost" onClick={()=>window.print()}><Download/> Export / Print</button></div><div className="stats compact"><Stat label="Active employees" value={data.analytics?.summary?.active_employees||0} icon={Users}/><Stat label="Average work/day" value={mins(data.analytics?.summary?.average_work_minutes)} tone="green" icon={Clock3}/><Stat label="Average break/day" value={mins(data.analytics?.summary?.average_break_minutes)} tone="amber" icon={Coffee}/></div><div className="table-wrap"><table><thead><tr><th>Employee</th><th>Days</th><th>Avg work</th><th>Avg break</th><th>Total work</th><th>Completion</th></tr></thead><tbody>{data.analytics?.employees?.map(e=><tr key={e.user_id}><td><strong>{e.username}</strong><small>{e.role}</small></td><td>{e.days_worked}</td><td>{mins(e.average_work_minutes)}</td><td>{mins(e.average_break_minutes)}</td><td>{mins(e.total_work_minutes)}</td><td>{e.completion_rate}%</td></tr>)}</tbody></table></div></section>}
       </div>
-      <div className="tracker-bar"><div><span className={`pulse ${active?"on":""}`}/><div><strong>{onBreak?"On break":active?"Work session active":"Ready to start"}</strong><small>{active?`${mins(data.overview.today.work_done_minutes)} focused today`:"Start when your workday begins"}</small></div><LiveTimer session={session} active={active} onBreak={onBreak}/></div><div className="actions">{!active?<button className="primary" onClick={()=>action("start")}><Play/> Start work</button>:onBreak?<><button className="primary" onClick={()=>action("resume")}><Play/> Resume work</button><button className="danger" onClick={()=>action("stop")}><CircleStop/> Stop work</button></>:<><button className="ghost" onClick={()=>action("break")}><Coffee/> Start break</button><button className="danger" onClick={()=>action("stop")}><CircleStop/> Stop work</button></>}</div></div>
+      <div className="tracker-bar"><div><span className={`pulse ${active?"on":""}`}/><div><strong>{onBreak?"On break":active?"Work session active":"Ready to start"}</strong><small>{active?`${mins(data.overview.today.work_done_minutes)} focused today`:"Start when your workday begins"}</small></div><LiveTimer session={session} active={active} onBreak={onBreak} serverOffsetMs={serverOffsetMs}/></div><div className="actions">{!active?<button className="primary" onClick={()=>action("start")}><Play/> Start work</button>:onBreak?<><button className="primary" onClick={()=>action("resume")}><Play/> Resume work</button><button className="danger" onClick={()=>action("stop")}><CircleStop/> Stop work</button></>:<><button className="ghost" onClick={()=>action("break")}><Coffee/> Start break</button><button className="danger" onClick={()=>action("stop")}><CircleStop/> Stop work</button></>}</div></div>
     </main>
     {modal&&<Modal title={{event:"Add calendar event",announcement:"Post announcement",employee:"Add employee",policy:"Edit company policy"}[modal]} onClose={()=>setModal(null)}><Forms type={modal} token={auth.token} users={data.employees} policy={data.policy} onDone={load} onClose={()=>setModal(null)}/></Modal>}
   </div>;
