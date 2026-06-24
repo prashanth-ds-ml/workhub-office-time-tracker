@@ -2,8 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import {
   Activity, BarChart3, Bell, BriefcaseBusiness, CalendarDays, ChevronLeft,
   ChevronRight, ChevronsLeft, ChevronsRight, CircleStop, Clock3, Coffee,
-  Download, Gauge, LogOut, Menu, Megaphone, Play, Plus, RefreshCw, Settings2,
-  ShieldCheck, Users, X
+  Download, Eye, EyeOff, Gauge, LogOut, Menu, Megaphone, Play, Plus,
+  RefreshCw, Settings2, ShieldCheck, Users, X
 } from "lucide-react";
 
 const API_URL = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
@@ -91,13 +91,15 @@ function Auth({ onAuth }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
   const submit = async e => {
     e.preventDefault(); setBusy(true); setError("");
     try {
       if (!companyEmail(form.email)) throw new Error(`Use your @${COMPANY_DOMAIN} company email address.`);
       if (mode === "forgot") {
         const result = await api("/auth/forgot-password", { method: "POST", body: { email: form.email } });
-        setNotice(result.reset_token ? `${result.message} Code: ${result.reset_token}` : result.message);
+        setNotice(result.reset_token ? `${result.message} Code: ${result.reset_token}` : "If an active account exists, a reset code has been sent. The code expires in 30 minutes.");
         setForm({ ...form, reset_token: result.reset_token || "" });
         setMode("reset");
         return;
@@ -131,23 +133,25 @@ function Auth({ onAuth }) {
       <div className="mobile-logo"><img className="launcher-mark mobile-launcher" src="/med360-launcher.svg" alt="Med 360+" /><span>WorkHub</span></div>
       <span className="eyebrow">{eyebrow}</span>
       <h2>{title}</h2>
-      <p className="muted">{mode === "login" ? "Enter your credentials to continue." : mode === "register" ? "Your account connects to the shared company calendar." : "Use your company email to receive a reset code."}</p>
+      <p className="muted">{mode === "login" ? "Enter your credentials to continue." : mode === "register" ? "Your account connects to the shared company calendar." : mode === "forgot" ? "Use your company email to receive a reset code." : "Enter the reset code from your email. Codes expire in 30 minutes."}</p>
       <form onSubmit={submit}>
         {mode === "register" && <label>Full name<input required value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} placeholder="Jane Smith" /></label>}
         <label>Company email<input required type="email" pattern={`[^@\\s]+@${COMPANY_DOMAIN.replace(".", "\\.")}`} title={`Use your @${COMPANY_DOMAIN} email`} value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} placeholder={`you@${COMPANY_DOMAIN}`} /></label>
         {mode === "reset" && <label>Reset code<input required inputMode="numeric" value={form.reset_token} onChange={e => setForm({ ...form, reset_token: e.target.value })} placeholder="6-digit code" /></label>}
-        {mode === "reset" && <label>New password<input required type="password" minLength="6" value={form.new_password} onChange={e => setForm({ ...form, new_password: e.target.value })} placeholder="••••••••" /></label>}
-        {(mode === "login" || mode === "register") && <label>Password<input required type="password" minLength="6" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} placeholder="••••••••" /></label>}
+        {mode === "reset" && <label>New password<span className="password-field"><input required type={showNewPassword ? "text" : "password"} minLength="6" value={form.new_password} onChange={e => setForm({ ...form, new_password: e.target.value })} placeholder="••••••••" /><button type="button" className="password-toggle" onClick={() => setShowNewPassword(!showNewPassword)} title={showNewPassword ? "Hide password" : "Show password"}>{showNewPassword ? <EyeOff /> : <Eye />}</button></span></label>}
+        {(mode === "login" || mode === "register") && <label>Password<span className="password-field"><input required type={showPassword ? "text" : "password"} minLength="6" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} placeholder="••••••••" /><button type="button" className="password-toggle" onClick={() => setShowPassword(!showPassword)} title={showPassword ? "Hide password" : "Show password"}>{showPassword ? <EyeOff /> : <Eye />}</button></span></label>}
         {mode === "register" && <><label>Account type<select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })}><option value="User">Employee</option><option value="Admin">Administrator</option></select></label>
         {form.role === "Admin" && <label>Admin bootstrap key<input required value={form.bootstrap_secret} onChange={e => setForm({ ...form, bootstrap_secret: e.target.value })} /></label>}</>}
         {error && <div className="error">{error}</div>}
         {notice && <div className="notice">{notice}</div>}
         <button className="primary wide" disabled={busy}>{busy ? "Connecting…" : mode === "login" ? "Sign in" : mode === "register" ? "Create account" : mode === "forgot" ? "Send reset code" : "Update password"}</button>
       </form>
-      {mode === "login" && <button className="text-button" onClick={() => { setMode("forgot"); setError(""); setNotice(""); }}>Forgot password?</button>}
-      <button className="text-button" onClick={() => { setMode(mode === "login" ? "register" : "login"); setError(""); setNotice(""); }}>
-        {mode === "login" ? "New to WorkHub? Create an account" : "Already have an account? Sign in"}
-      </button>
+      <div className="auth-links">
+        {mode === "login" && <button className="text-button" onClick={() => { setMode("forgot"); setError(""); setNotice(""); }}>Forgot password?</button>}
+        <button className="text-button" onClick={() => { setMode(mode === "login" ? "register" : "login"); setError(""); setNotice(""); }}>
+          {mode === "login" ? "New to WorkHub? Create an account" : "Already have an account? Sign in"}
+        </button>
+      </div>
     </section>
   </div>;
 }
@@ -160,6 +164,10 @@ function Modal({ title, children, onClose }) {
 
 function Stat({ label, value, hint, tone = "blue", icon: Icon = Activity }) {
   return <article className="stat-card"><div className={`stat-icon ${tone}`}><Icon /></div><div><span>{label}</span><strong>{value}</strong><small>{hint}</small></div></article>;
+}
+
+function InlineEmpty({ title, detail }) {
+  return <div className="inline-empty"><strong>{title}</strong><span>{detail}</span></div>;
 }
 
 function ClockBadge({ serverOffsetMs = 0 }) {
@@ -182,7 +190,7 @@ function LiveTimer({ session, active, onBreak, serverOffsetMs = 0 }) {
       - (session.breaks || []).reduce((sum, brk) => brk.end ? sum + elapsedMs(brk.start, brk.end) : sum, 0)
       - (session.active_break ? elapsedMs(session.active_break.start, now) : 0)
     : 0;
-  return <div className="live-timer"><span>Live timer</span><strong>{formatDuration(liveTimerMs)}</strong><small>{active ? (onBreak ? "Break paused from focus time" : "Counting active work time") : "Waiting to start"}</small></div>;
+  return <div className="live-timer"><span>Live timer · Server IST</span><strong>{formatDuration(liveTimerMs)}</strong><small>{active ? (onBreak ? "Break paused from focus time" : "Counting active work time") : "Waiting to start"}</small></div>;
 }
 
 function Calendar({ events, month, setMonth, onAdd, admin }) {
@@ -439,11 +447,11 @@ export default function App() {
         {sectionBusy===page&&<div className="section-loading"><RefreshCw className="spin"/> Loading {title.toLowerCase()}…</div>}
         {page==="dashboard"&&<Dashboard overview={data.overview} serverOffsetMs={serverOffsetMs}/>}
         {page==="calendar"&&<Calendar events={data.overview.calendar_month||[]} month={month} setMonth={setMonth} admin={admin} onAdd={()=>setModal("event")}/>}
-        {page==="attendance"&&<section className="panel"><div className="panel-head"><div><h3>Attendance history</h3><p>Your recorded work sessions</p></div></div><div className="table-wrap"><table><thead><tr><th>Date</th><th>Started</th><th>Ended</th><th>Work</th><th>Break</th><th>Status</th></tr></thead><tbody>{data.sessions.map(s=><tr key={s.id}><td>{s.attendance_date || dateFormatter({ day:"2-digit", month:"short", year:"numeric" }).format(new Date(s.start))}</td><td>{s.start_time || dateFormatter({ hour:"2-digit", minute:"2-digit", hour12:true }).format(new Date(s.start))}</td><td>{s.end_time || (s.end?dateFormatter({ hour:"2-digit", minute:"2-digit", hour12:true }).format(new Date(s.end)):"—")}</td><td>{mins(s.work_minutes)}</td><td>{mins(s.break_minutes)}</td><td><span className={`status ${s.is_active?"green":"gray"}`}>{s.is_active?"Active":"Completed"}</span></td></tr>)}</tbody></table></div></section>}
-        {page==="announcements"&&<section className="panel"><div className="panel-head"><div><h3>Company announcements</h3><p>Important news and team updates</p></div>{admin&&<button className="primary" onClick={()=>setModal("announcement")}><Plus/> Post announcement</button>}</div><div className="announcement-grid">{data.announcements.map(a=><article className={a.is_read?"read":""} key={a.id}><div className="feed-icon"><Megaphone/></div><div><small>{a.effective_date}</small><h3>{a.title}</h3><p>{a.content}</p>{!a.is_read&&<button className="text-button" onClick={()=>markRead(a.id)}>Mark as read</button>}</div></article>)}</div></section>}
-        {page==="employees"&&admin&&<section className="panel"><div className="panel-head"><div><h3>Employees</h3><p>Manage access and review current status</p></div><button className="primary" onClick={()=>setModal("employee")}><Plus/> Add employee</button></div><div className="table-wrap"><table><thead><tr><th>Employee</th><th>Role</th><th>Office hours</th><th>Status</th><th></th></tr></thead><tbody>{data.employees.map(u=><tr key={u.id}><td><strong>{u.username}</strong><small>{u.email}</small></td><td>{u.role}</td><td>{u.office_hours?`${u.office_hours.start} – ${u.office_hours.end}`:"Company default"}</td><td><span className={`status ${u.is_active?"green":"red"}`}>{u.is_active?"Active":"Disabled"}</span></td><td><button className="ghost" onClick={()=>toggleUser(u)}>{u.is_active?"Disable":"Enable"}</button></td></tr>)}</tbody></table></div></section>}
-        {page==="policies"&&admin&&<section className="panel"><div className="panel-head"><div><h3>Company work policy</h3><p>Applied to every employee</p></div><button className="primary" onClick={()=>setModal("policy")}><Settings2/> Edit policy</button></div><div className="policy-grid"><Stat label="Office hours" value={`${data.policy?.office_hours?.start||"—"} – ${data.policy?.office_hours?.end||"—"}`} hint="standard working window" icon={Clock3}/>{Object.entries(data.policy?.rules||{}).map(([k,v])=><Stat key={k} label={k.replaceAll("_"," ")} value={k.includes("hours")?`${v}h`:`${v}m`} hint="company-wide rule" tone="purple" icon={ShieldCheck}/>)}</div></section>}
-        {page==="reports"&&admin&&<section className="panel"><div className="panel-head"><div><h3>Employee analytics · {monthTitle(month)}</h3><p>Work and break totals for the selected month</p></div><button className="ghost" onClick={()=>window.print()}><Download/> Export / Print</button></div><div className="stats compact"><Stat label="Active employees" value={data.analytics?.summary?.active_employees||0} icon={Users}/><Stat label="Average work/day" value={mins(data.analytics?.summary?.average_work_minutes)} tone="green" icon={Clock3}/><Stat label="Average break/day" value={mins(data.analytics?.summary?.average_break_minutes)} tone="amber" icon={Coffee}/></div><div className="table-wrap"><table><thead><tr><th>Employee</th><th>Days</th><th>Avg work</th><th>Avg break</th><th>Total work</th><th>Completion</th></tr></thead><tbody>{data.analytics?.employees?.map(e=><tr key={e.user_id}><td><strong>{e.username}</strong><small>{e.role}</small></td><td>{e.days_worked}</td><td>{mins(e.average_work_minutes)}</td><td>{mins(e.average_break_minutes)}</td><td>{mins(e.total_work_minutes)}</td><td>{e.completion_rate}%</td></tr>)}</tbody></table></div></section>}
+        {page==="attendance"&&<section className="panel"><div className="panel-head"><div><h3>Attendance history</h3><p>Your recorded work sessions</p></div></div>{data.sessions.length?<div className="table-wrap"><table><thead><tr><th>Date</th><th>Started</th><th>Ended</th><th>Work</th><th>Break</th><th>Status</th></tr></thead><tbody>{data.sessions.map(s=><tr key={s.id}><td>{s.attendance_date || dateFormatter({ day:"2-digit", month:"short", year:"numeric" }).format(new Date(s.start))}</td><td>{s.start_time || dateFormatter({ hour:"2-digit", minute:"2-digit", hour12:true }).format(new Date(s.start))}</td><td>{s.end_time || (s.end?dateFormatter({ hour:"2-digit", minute:"2-digit", hour12:true }).format(new Date(s.end)):"—")}</td><td>{mins(s.work_minutes)}</td><td>{mins(s.break_minutes)}</td><td><span className={`status ${s.is_active?"green":"gray"}`}>{s.is_active?"Active":"Completed"}</span></td></tr>)}</tbody></table></div>:<InlineEmpty title="No attendance records for this month" detail="Start a work session and it will appear here."/>}</section>}
+        {page==="announcements"&&<section className="panel"><div className="panel-head"><div><h3>Company announcements</h3><p>Important news and team updates</p></div>{admin&&<button className="primary" onClick={()=>setModal("announcement")}><Plus/> Post announcement</button>}</div>{data.announcements.length?<div className="announcement-grid">{data.announcements.map(a=><article className={a.is_read?"read":""} key={a.id}><div className="feed-icon"><Megaphone/></div><div><small>{a.effective_date}</small><h3>{a.title}</h3><p>{a.content}</p>{!a.is_read&&<button className="text-button" onClick={()=>markRead(a.id)}>Mark as read</button>}</div></article>)}</div>:<InlineEmpty title="No announcements yet" detail={admin ? "Post an announcement to notify the team." : "Team updates will appear here."}/>}</section>}
+        {page==="employees"&&admin&&<section className="panel"><div className="panel-head"><div><h3>Employees</h3><p>Manage access and review current status</p></div><button className="primary" onClick={()=>setModal("employee")}><Plus/> Add employee</button></div>{data.employees.length?<div className="table-wrap"><table><thead><tr><th>Employee</th><th>Role</th><th>Office hours</th><th>Status</th><th></th></tr></thead><tbody>{data.employees.map(u=><tr key={u.id}><td><strong>{u.username}</strong><small>{u.email}</small></td><td>{u.role}</td><td>{u.office_hours?`${u.office_hours.start} – ${u.office_hours.end}`:"Company default"}</td><td><span className={`status ${u.is_active?"green":"red"}`}>{u.is_active?"Active":"Disabled"}</span></td><td><button className="ghost" onClick={()=>toggleUser(u)}>{u.is_active?"Disable":"Enable"}</button></td></tr>)}</tbody></table></div>:<InlineEmpty title="No employees loaded" detail="Use Add employee to create the first account."/>}</section>}
+        {page==="policies"&&admin&&<section className="panel"><div className="panel-head"><div><h3>Company work policy</h3><p>Applied to every employee</p></div><button className="primary" onClick={()=>setModal("policy")}><Settings2/> Edit policy</button></div>{data.policy?<div className="policy-grid"><Stat label="Office hours" value={`${data.policy?.office_hours?.start||"—"} – ${data.policy?.office_hours?.end||"—"}`} hint="standard working window" icon={Clock3}/>{Object.entries(data.policy?.rules||{}).map(([k,v])=><Stat key={k} label={k.replaceAll("_"," ")} value={k.includes("hours")?`${v}h`:`${v}m`} hint="company-wide rule" tone="purple" icon={ShieldCheck}/>)}</div>:<InlineEmpty title="Policy is loading" detail="Company working hours and rules will appear here."/>}</section>}
+        {page==="reports"&&admin&&<section className="panel"><div className="panel-head"><div><h3>Employee analytics · {monthTitle(month)}</h3><p>Work and break totals for the selected month</p></div><button className="ghost" onClick={()=>window.print()}><Download/> Export / Print</button></div>{data.analytics?<><div className="stats compact"><Stat label="Active employees" value={data.analytics?.summary?.active_employees||0} icon={Users}/><Stat label="Average work/day" value={mins(data.analytics?.summary?.average_work_minutes)} tone="green" icon={Clock3}/><Stat label="Average break/day" value={mins(data.analytics?.summary?.average_break_minutes)} tone="amber" icon={Coffee}/></div><div className="table-wrap"><table><thead><tr><th>Employee</th><th>Days</th><th>Avg work</th><th>Avg break</th><th>Total work</th><th>Completion</th></tr></thead><tbody>{data.analytics?.employees?.map(e=><tr key={e.user_id}><td><strong>{e.username}</strong><small>{e.role}</small></td><td>{e.days_worked}</td><td>{mins(e.average_work_minutes)}</td><td>{mins(e.average_break_minutes)}</td><td>{mins(e.total_work_minutes)}</td><td>{e.completion_rate}%</td></tr>)}</tbody></table></div></>:<InlineEmpty title="Reports are loading" detail="Monthly analytics will appear after the report data loads."/>}</section>}
       </div>
       <div className="tracker-bar"><div><span className={`pulse ${active?"on":""}`}/><div><strong>{onBreak?"On break":active?"Work session active":"Ready to start"}</strong><small>{active?`${mins(data.overview.today.work_done_minutes)} focused today`:"Start when your workday begins"}</small></div><LiveTimer session={session} active={active} onBreak={onBreak} serverOffsetMs={serverOffsetMs}/></div><div className="actions">{!active?<button className="primary" onClick={()=>action("start")}><Play/> Start work</button>:onBreak?<><button className="primary" onClick={()=>action("resume")}><Play/> Resume work</button><button className="danger" onClick={()=>action("stop")}><CircleStop/> Stop work</button></>:<><button className="ghost" onClick={()=>action("break")}><Coffee/> Start break</button><button className="danger" onClick={()=>action("stop")}><CircleStop/> Stop work</button></>}</div></div>
     </main>
