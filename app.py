@@ -14,6 +14,7 @@ import hmac
 import json
 import os
 import secrets
+import smtplib
 import threading
 import time
 import uuid
@@ -31,6 +32,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, validator
+from email.message import EmailMessage
 
 from storage import claim_first_admin, delete_row, load_rows, save_rows, storage_health, upsert_rows
 
@@ -45,6 +47,7 @@ WORKHUB_ENV = os.getenv("WORKHUB_ENV", "development").lower()
 JWT_SECRET = os.getenv("WORKHUB_JWT_SECRET", "development-only-change-me")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = int(os.getenv("WORKHUB_JWT_EXPIRE_HOURS", "12"))
+PASSWORD_RESET_MINUTES = int(os.getenv("WORKHUB_PASSWORD_RESET_MINUTES", "30"))
 BOOTSTRAP_SECRET = os.getenv("WORKHUB_BOOTSTRAP_SECRET", "")
 AUTH_COOKIE_NAME = "workhub_session"
 ALLOWED_EMAIL_DOMAIN = os.getenv("WORKHUB_EMAIL_DOMAIN", "sims.healthcare").strip().lower()
@@ -124,6 +127,7 @@ EVENT_TYPES = {
     "LONG_WEEKEND",
     "COMPANY_EVENT",
 }
+USER_PRIVATE_FIELDS = {"password", "password_reset_hash", "password_reset_expires_at"}
 
 DEFAULT_POLICIES: List[Dict[str, Any]] = [
     {
@@ -320,6 +324,47 @@ def _verify_password(password: str, encoded: str) -> bool:
         return False
 
 
+def _hash_reset_token(token: str) -> str:
+    return hmac.new(JWT_SECRET.encode("utf-8"), token.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _send_password_reset_email(email: str, token: str) -> bool:
+    smtp_host = os.getenv("WORKHUB_SMTP_HOST", "").strip()
+    smtp_from = os.getenv("WORKHUB_SMTP_FROM", "").strip()
+    if not smtp_host or not smtp_from:
+        return False
+
+    smtp_port = int(os.getenv("WORKHUB_SMTP_PORT", "587"))
+    smtp_user = os.getenv("WORKHUB_SMTP_USER", "").strip()
+    smtp_password = os.getenv("WORKHUB_SMTP_PASSWORD", "")
+    use_tls = os.getenv("WORKHUB_SMTP_TLS", "true").lower() == "true"
+
+    message = EmailMessage()
+    message["From"] = smtp_from
+    message["To"] = email
+    message["Subject"] = "WorkHub password reset code"
+    message.set_content(
+        "\n".join(
+            [
+                "Use this WorkHub reset code to set a new password:",
+                "",
+                token,
+                "",
+                f"This code expires in {PASSWORD_RESET_MINUTES} minutes.",
+                "If you did not request this, ignore this email.",
+            ]
+        )
+    )
+
+    with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as smtp:
+        if use_tls:
+            smtp.starttls()
+        if smtp_user:
+            smtp.login(smtp_user, smtp_password)
+        smtp.send_message(message)
+    return True
+
+
 def _create_access_token(user: "User") -> str:
     now = _now()
     return jwt.encode(
@@ -433,6 +478,8 @@ class User(BaseModel):
     is_active: bool = True
     office_hours: Optional[Dict[str, str]] = None
     rules: Optional[Dict[str, float]] = None
+    password_reset_hash: Optional[str] = None
+    password_reset_expires_at: Optional[str] = None
 
     @validator("role")
     def _check_role(cls, value: str) -> str:
@@ -475,6 +522,16 @@ class RegistrationRequest(BaseModel):
         if value not in {"User", "Admin"}:
             raise ValueError("role must be 'User' or 'Admin'")
         return value
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    email: str
+    token: str
+    new_password: str
 
 
 class AdminUserCreate(BaseModel):
@@ -870,7 +927,7 @@ def _break_view(brk: Break) -> Dict[str, Any]:
 
 
 def _user_summary(user: User) -> Dict[str, Any]:
-    summary = user.dict(exclude={"password"})
+    summary = user.dict(exclude=USER_PRIVATE_FIELDS)
     active_session = next(
         (session for session in sessions_cache if session.user_id == user.id and session.end is None),
         None,
@@ -1309,7 +1366,7 @@ def login(payload: LoginRequest, response: Response) -> Dict[str, Any]:
     return {
         "access_token": access_token,
         "token_type": "bearer",
-        "user": user.dict(exclude={"password"}),
+        "user": user.dict(exclude=USER_PRIVATE_FIELDS),
     }
 
 
@@ -1352,8 +1409,64 @@ def register(payload: RegistrationRequest, response: Response) -> Dict[str, Any]
     return {
         "access_token": access_token,
         "token_type": "bearer",
-        "user": user.dict(exclude={"password"}),
+        "user": user.dict(exclude=USER_PRIVATE_FIELDS),
     }
+
+
+@app.post("/auth/forgot-password")
+def forgot_password(payload: ForgotPasswordRequest) -> Dict[str, Any]:
+    _refresh_cache()
+    try:
+        email = _normalize_company_email(payload.email)
+    except HTTPException:
+        return {"message": "If the account exists, a reset code has been sent."}
+
+    user = next((candidate for candidate in users_cache if candidate.email.lower() == email), None)
+    response: Dict[str, Any] = {"message": "If the account exists, a reset code has been sent."}
+    if not user or not user.is_active:
+        return response
+
+    token = f"{secrets.randbelow(1_000_000):06d}"
+    user.password_reset_hash = _hash_reset_token(token)
+    user.password_reset_expires_at = (_now() + timedelta(minutes=PASSWORD_RESET_MINUTES)).isoformat()
+    _upsert_models(USERS_FILE, [user])
+
+    delivered = False
+    try:
+        delivered = _send_password_reset_email(user.email, token)
+    except Exception:
+        delivered = False
+
+    response["delivery"] = "email" if delivered else "manual"
+    if WORKHUB_ENV != "production" or os.getenv("WORKHUB_PASSWORD_RESET_EXPOSE_TOKEN", "").lower() == "true":
+        response["reset_token"] = token
+    return response
+
+
+@app.post("/auth/reset-password")
+def reset_password(payload: ResetPasswordRequest) -> Dict[str, str]:
+    _refresh_cache()
+    email = _normalize_company_email(payload.email)
+    token = payload.token.strip()
+    if len(payload.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    user = next((candidate for candidate in users_cache if candidate.email.lower() == email), None)
+    if not user or not user.password_reset_hash or not user.password_reset_expires_at:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset code")
+    expires_at = datetime.fromisoformat(user.password_reset_expires_at)
+    if _ensure_ist(expires_at) < _now():
+        user.password_reset_hash = None
+        user.password_reset_expires_at = None
+        _upsert_models(USERS_FILE, [user])
+        raise HTTPException(status_code=400, detail="Invalid or expired reset code")
+    if not hmac.compare_digest(user.password_reset_hash, _hash_reset_token(token)):
+        raise HTTPException(status_code=400, detail="Invalid or expired reset code")
+
+    user.password = _hash_password(payload.new_password)
+    user.password_reset_hash = None
+    user.password_reset_expires_at = None
+    _upsert_models(USERS_FILE, [user])
+    return {"message": "Password updated. Sign in with your new password."}
 
 
 @app.get("/me", response_model=UserPublic)
@@ -1819,7 +1932,7 @@ def web_bootstrap(
     selected_month = month or _current_month_label()
     return {
         "generated_at": _iso_now(),
-        "user": current_user.dict(exclude={"password"}),
+        "user": current_user.dict(exclude=USER_PRIVATE_FIELDS),
         "overview": _dashboard_overview(current_user, selected_month, announcement_limit=5),
         "sessions": [],
         "announcements": [],

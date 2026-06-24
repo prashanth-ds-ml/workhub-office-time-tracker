@@ -26,3 +26,17 @@ services:
         value: "true"
       - key: WORKHUB_EMAIL_DOMAIN
         value: sims.healthcare
+      - key: WORKHUB_PASSWORD_RESET_MINUTES
+        value: "30"
+      - key: WORKHUB_SMTP_HOST
+        sync: false
+      - key: WORKHUB_SMTP_PORT
+        value: "587"
+      - key: WORKHUB_SMTP_TLS
+        value: "true"
+      - key: WORKHUB_SMTP_USER
+        sync: false
+      - key: WORKHUB_SMTP_PASSWORD
+        sync: false
+      - key: WORKHUB_SMTP_FROM
+        sync: false
