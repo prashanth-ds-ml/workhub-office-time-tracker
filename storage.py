@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Iterable
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -20,6 +20,7 @@ _MONGO_URI = os.getenv("MONGO_URI") or os.getenv("MONGODB_URI") or "mongodb://12
 _MONGO_DB = os.getenv("MONGO_DB", "office_time_tracker")
 _FORCE_JSON = os.getenv("WORKHUB_STORAGE", "").lower() == "json"
 _PRODUCTION = os.getenv("WORKHUB_ENV", "development").lower() == "production"
+INDIA_TZ = timezone(timedelta(hours=5, minutes=30))
 
 _FILE_TO_COLLECTION = {
     "users.json": "users",
@@ -179,7 +180,7 @@ class _MongoStorage(_BaseStorage):
         try:
             previous = self.db["_workhub_system"].find_one_and_update(
                 {"_id": "bootstrap_admin", "claimed": {"$ne": True}},
-                {"$set": {"claimed": True, "claimed_at": datetime.utcnow().isoformat()}},
+                {"$set": {"claimed": True, "claimed_at": datetime.now(INDIA_TZ).isoformat()}},
                 upsert=True,
                 return_document=ReturnDocument.BEFORE,
             )

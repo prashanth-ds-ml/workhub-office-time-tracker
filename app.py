@@ -14,11 +14,12 @@ import hmac
 import json
 import os
 import secrets
+import smtplib
 import threading
 import time
 import uuid
 from collections import defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -31,6 +32,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, validator
+from email.message import EmailMessage
 
 from storage import claim_first_admin, delete_row, load_rows, save_rows, storage_health, upsert_rows
 
@@ -38,11 +40,14 @@ load_dotenv()
 
 app = FastAPI(title="Office Time Tracker API")
 bearer_scheme = HTTPBearer(auto_error=False)
+INDIA_TZ = timezone(timedelta(hours=5, minutes=30))
+UTC = timezone.utc
 
 WORKHUB_ENV = os.getenv("WORKHUB_ENV", "development").lower()
 JWT_SECRET = os.getenv("WORKHUB_JWT_SECRET", "development-only-change-me")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = int(os.getenv("WORKHUB_JWT_EXPIRE_HOURS", "12"))
+PASSWORD_RESET_MINUTES = int(os.getenv("WORKHUB_PASSWORD_RESET_MINUTES", "30"))
 BOOTSTRAP_SECRET = os.getenv("WORKHUB_BOOTSTRAP_SECRET", "")
 AUTH_COOKIE_NAME = "workhub_session"
 ALLOWED_EMAIL_DOMAIN = os.getenv("WORKHUB_EMAIL_DOMAIN", "sims.healthcare").strip().lower()
@@ -122,6 +127,7 @@ EVENT_TYPES = {
     "LONG_WEEKEND",
     "COMPANY_EVENT",
 }
+USER_PRIVATE_FIELDS = {"password", "password_reset_hash", "password_reset_expires_at"}
 
 DEFAULT_POLICIES: List[Dict[str, Any]] = [
     {
@@ -194,11 +200,113 @@ DEFAULT_COMPANY_WORK_POLICY: Dict[str, Any] = {
 
 
 def _now() -> datetime:
-    return datetime.utcnow()
+    return datetime.now(UTC).astimezone(INDIA_TZ)
 
 
 def _iso_now() -> str:
     return _now().isoformat()
+
+
+def _ensure_ist(value: Optional[datetime]) -> Optional[datetime]:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=INDIA_TZ)
+    return value.astimezone(INDIA_TZ)
+
+
+def _ist_date(value: datetime) -> date:
+    return _ensure_ist(value).date()
+
+
+def _ist_today(reference: Optional[datetime] = None) -> date:
+    return (reference or _now()).astimezone(INDIA_TZ).date()
+
+
+def _session_day(session: Session) -> date:
+    return _ist_date(session.start)
+
+
+def _serialize_datetime(value: Optional[datetime]) -> Optional[str]:
+    if value is None:
+        return None
+    return _ensure_ist(value).isoformat()
+
+
+def _minutes_between(start: datetime, end: datetime) -> float:
+    return (_ensure_ist(end) - _ensure_ist(start)).total_seconds() / 60
+
+
+def _normalize_session(session: Session) -> Session:
+    session.start = _ensure_ist(session.start)  # type: ignore[assignment]
+    session.end = _ensure_ist(session.end) if session.end else None  # type: ignore[assignment]
+    return session
+
+
+def _normalize_break(brk: Break) -> Break:
+    brk.start = _ensure_ist(brk.start)  # type: ignore[assignment]
+    brk.end = _ensure_ist(brk.end) if brk.end else None  # type: ignore[assignment]
+    return brk
+
+
+def _normalize_timestamp_string(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return value
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return value
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=INDIA_TZ)
+    return parsed.astimezone(INDIA_TZ).isoformat()
+
+
+def _migrate_cached_timestamps_to_ist() -> bool:
+    changed = False
+    for session in sessions_cache:
+        start = _ensure_ist(session.start)
+        end = _ensure_ist(session.end) if session.end else None
+        if start != session.start or end != session.end:
+            session.start = start  # type: ignore[assignment]
+            session.end = end  # type: ignore[assignment]
+            changed = True
+    for brk in breaks_cache:
+        start = _ensure_ist(brk.start)
+        end = _ensure_ist(brk.end) if brk.end else None
+        if start != brk.start or end != brk.end:
+            brk.start = start  # type: ignore[assignment]
+            brk.end = end  # type: ignore[assignment]
+            changed = True
+    for event in calendar_events_cache:
+        created_at = _normalize_timestamp_string(event.created_at)
+        updated_at = _normalize_timestamp_string(event.updated_at)
+        if created_at != event.created_at or updated_at != event.updated_at:
+            event.created_at = created_at or event.created_at
+            event.updated_at = updated_at or event.updated_at
+            changed = True
+    for announcement in announcements_cache:
+        created_at = _normalize_timestamp_string(announcement.created_at)
+        if created_at != announcement.created_at:
+            announcement.created_at = created_at or announcement.created_at
+            changed = True
+    for company_event in company_events_cache:
+        created_at = _normalize_timestamp_string(company_event.created_at)
+        if created_at != company_event.created_at:
+            company_event.created_at = created_at or company_event.created_at
+            changed = True
+    for read_row in announcement_reads_cache:
+        read_at = _normalize_timestamp_string(read_row.read_at)
+        if read_at != read_row.read_at:
+            read_row.read_at = read_at
+            changed = True
+    for alert in alert_ack_cache:
+        created_at = _normalize_timestamp_string(alert.created_at)
+        acknowledged_at = _normalize_timestamp_string(alert.acknowledged_at)
+        if created_at != alert.created_at or acknowledged_at != alert.acknowledged_at:
+            alert.created_at = created_at or alert.created_at
+            alert.acknowledged_at = acknowledged_at
+            changed = True
+    return changed
 
 
 def _hash_password(password: str) -> str:
@@ -218,6 +326,47 @@ def _verify_password(password: str, encoded: str) -> bool:
         return hmac.compare_digest(actual, expected)
     except (ValueError, TypeError):
         return False
+
+
+def _hash_reset_token(token: str) -> str:
+    return hmac.new(JWT_SECRET.encode("utf-8"), token.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _send_password_reset_email(email: str, token: str) -> bool:
+    smtp_host = os.getenv("WORKHUB_SMTP_HOST", "").strip()
+    smtp_from = os.getenv("WORKHUB_SMTP_FROM", "").strip()
+    if not smtp_host or not smtp_from:
+        return False
+
+    smtp_port = int(os.getenv("WORKHUB_SMTP_PORT", "587"))
+    smtp_user = os.getenv("WORKHUB_SMTP_USER", "").strip()
+    smtp_password = os.getenv("WORKHUB_SMTP_PASSWORD", "")
+    use_tls = os.getenv("WORKHUB_SMTP_TLS", "true").lower() == "true"
+
+    message = EmailMessage()
+    message["From"] = smtp_from
+    message["To"] = email
+    message["Subject"] = "WorkHub password reset code"
+    message.set_content(
+        "\n".join(
+            [
+                "Use this WorkHub reset code to set a new password:",
+                "",
+                token,
+                "",
+                f"This code expires in {PASSWORD_RESET_MINUTES} minutes.",
+                "If you did not request this, ignore this email.",
+            ]
+        )
+    )
+
+    with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as smtp:
+        if use_tls:
+            smtp.starttls()
+        if smtp_user:
+            smtp.login(smtp_user, smtp_password)
+        smtp.send_message(message)
+    return True
 
 
 def _create_access_token(user: "User") -> str:
@@ -333,6 +482,8 @@ class User(BaseModel):
     is_active: bool = True
     office_hours: Optional[Dict[str, str]] = None
     rules: Optional[Dict[str, float]] = None
+    password_reset_hash: Optional[str] = None
+    password_reset_expires_at: Optional[str] = None
 
     @validator("role")
     def _check_role(cls, value: str) -> str:
@@ -375,6 +526,16 @@ class RegistrationRequest(BaseModel):
         if value not in {"User", "Admin"}:
             raise ValueError("role must be 'User' or 'Admin'")
         return value
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    email: str
+    token: str
+    new_password: str
 
 
 class AdminUserCreate(BaseModel):
@@ -554,8 +715,8 @@ def _refresh_cache(force: bool = False) -> None:
         if not force and now - _cache_refreshed_at < _CACHE_TTL_SECONDS:
             return
         loaded_users = [User(**row) for row in _load_json(USERS_FILE)]
-        loaded_sessions = [Session(**row) for row in _load_json(SESSIONS_FILE)]
-        loaded_breaks = [Break(**row) for row in _load_json(BREAKS_FILE)]
+        loaded_sessions = [_normalize_session(Session(**row)) for row in _load_json(SESSIONS_FILE)]
+        loaded_breaks = [_normalize_break(Break(**row)) for row in _load_json(BREAKS_FILE)]
         loaded_calendar_events = [
             CalendarEvent(**row) for row in _load_json(CALENDAR_EVENTS_FILE)
         ]
@@ -585,6 +746,8 @@ def _refresh_cache(force: bool = False) -> None:
         company_events_cache = loaded_company_events
         announcement_reads_cache = loaded_reads
         alert_ack_cache = loaded_alerts
+        if _migrate_cached_timestamps_to_ist():
+            _persist_cache()
         _cache_refreshed_at = now
 
 
@@ -705,8 +868,8 @@ def _sync_session_breaks(session: Session) -> None:
     session.breaks = [
         {
             "id": brk.id,
-            "start": brk.start.isoformat() if isinstance(brk.start, datetime) else brk.start,
-            "end": brk.end.isoformat() if isinstance(brk.end, datetime) else brk.end,
+            "start": _serialize_datetime(brk.start),
+            "end": _serialize_datetime(brk.end),
         }
         for brk in breaks_cache
         if brk.session_id == session.id
@@ -718,21 +881,21 @@ def _session_break_minutes(session: Session) -> float:
     for brk in breaks_cache:
         if brk.session_id != session.id or brk.end is None:
             continue
-        total += (brk.end - brk.start).total_seconds() / 60
+        total += _minutes_between(brk.start, brk.end)
     return total
 
 
 def _session_work_minutes(session: Session, reference: Optional[datetime] = None) -> float:
-    reference = reference or _now()
-    end = session.end or reference
-    total = (end - session.start).total_seconds() / 60
+    reference = _ensure_ist(reference or _now())
+    end = _ensure_ist(session.end) or reference
+    total = _minutes_between(session.start, end)
     active_break = next(
         (brk for brk in breaks_cache if brk.session_id == session.id and brk.end is None),
         None,
     )
     active_break_minutes = 0.0
     if active_break:
-        active_break_minutes = max(0.0, (reference - active_break.start).total_seconds() / 60)
+        active_break_minutes = max(0.0, _minutes_between(active_break.start, reference))
     return max(0.0, total - _session_break_minutes(session) - active_break_minutes)
 
 
@@ -742,12 +905,19 @@ def _session_view(session: Session) -> Dict[str, Any]:
         (brk for brk in breaks_cache if brk.session_id == session.id and brk.end is None),
         None,
     )
+    start_ist = _ensure_ist(session.start)
+    end_ist = _ensure_ist(session.end) if session.end else None
     return {
         **session.dict(),
         "work_minutes": round(_session_work_minutes(session), 2),
         "break_minutes": round(_session_break_minutes(session), 2),
-        "active_break": active_break.dict() if active_break else None,
+        "active_break": _break_view(active_break) if active_break else None,
         "is_active": session.end is None,
+        "start": start_ist.isoformat(),
+        "end": end_ist.isoformat() if end_ist else None,
+        "attendance_date": start_ist.strftime("%d %b %Y"),
+        "start_time": start_ist.strftime("%I:%M %p"),
+        "end_time": end_ist.strftime("%I:%M %p") if end_ist else None,
     }
 
 
@@ -755,13 +925,13 @@ def _break_view(brk: Break) -> Dict[str, Any]:
     return {
         "id": brk.id,
         "session_id": brk.session_id,
-        "start": brk.start.isoformat() if isinstance(brk.start, datetime) else brk.start,
-        "end": brk.end.isoformat() if isinstance(brk.end, datetime) else brk.end,
+        "start": _serialize_datetime(brk.start),
+        "end": _serialize_datetime(brk.end),
     }
 
 
 def _user_summary(user: User) -> Dict[str, Any]:
-    summary = user.dict(exclude={"password"})
+    summary = user.dict(exclude=USER_PRIVATE_FIELDS)
     active_session = next(
         (session for session in sessions_cache if session.user_id == user.id and session.end is None),
         None,
@@ -771,7 +941,7 @@ def _user_summary(user: User) -> Dict[str, Any]:
 
 
 def _find_session_for_user(user_id: str, target_date: date) -> Optional[Session]:
-    candidates = [session for session in sessions_cache if session.user_id == user_id and session.start.date() == target_date]
+    candidates = [session for session in sessions_cache if session.user_id == user_id and _session_day(session) == target_date]
     if candidates:
         candidates.sort(key=lambda item: item.start, reverse=True)
         return candidates[0]
@@ -942,7 +1112,7 @@ def _count_workdays(month_events: List[Dict[str, Any]]) -> int:
 
 
 def _current_month_label(today: Optional[date] = None) -> str:
-    today = today or _now().date()
+    today = today or _ist_today()
     return today.strftime("%Y-%m")
 
 
@@ -994,18 +1164,18 @@ def _attendance_summary_for_date(user: User, target_date: date) -> Dict[str, Any
     }
 
 
-def _dashboard_overview(user: User, month: str) -> Dict[str, Any]:
-    today = _now().date()
+def _dashboard_overview(user: User, month: str, announcement_limit: Optional[int] = None) -> Dict[str, Any]:
+    today = _ist_today()
     month_events = _month_calendar(month)
     long_weekends = _derive_long_weekends(month_events)
     attendance_today = _attendance_summary_for_date(user, today)
 
     sessions_for_month = [
-        session for session in sessions_cache if session.user_id == user.id and session.start.date().strftime("%Y-%m") == month
+        session for session in sessions_cache if session.user_id == user.id and _session_day(session).strftime("%Y-%m") == month
     ]
     month_sessions_by_day: Dict[str, float] = defaultdict(float)
     for session in sessions_for_month:
-        day_key = session.start.date().isoformat()
+        day_key = _session_day(session).isoformat()
         month_sessions_by_day[day_key] = max(
             month_sessions_by_day[day_key],
             _session_work_minutes(session),
@@ -1034,10 +1204,7 @@ def _dashboard_overview(user: User, month: str) -> Dict[str, Any]:
         1 for event in attendance_days if date.fromisoformat(event["date"]) > today
     )
 
-    upcoming_events = [
-        _calendar_event_for_date(today + timedelta(days=offset))
-        for offset in range(1, 60)
-    ]
+    upcoming_events = [_calendar_event_for_date(today + timedelta(days=offset)) for offset in range(1, 90)]
     next_holiday = next((event for event in upcoming_events if event["event_type"] == "HOLIDAY"), None)
     next_half_day = next((event for event in upcoming_events if event["event_type"] == "HALF_DAY"), None)
     next_company_holiday = next(
@@ -1062,10 +1229,24 @@ def _dashboard_overview(user: User, month: str) -> Dict[str, Any]:
         ),
         None,
     )
+    upcoming_holidays = [
+        {
+            "date": event["date"],
+            "title": event["title"],
+            "event_type": event["event_type"],
+            "days_until": (date.fromisoformat(event["date"]) - today).days,
+        }
+        for event in upcoming_events
+        if event["event_type"] in {"HOLIDAY", "COMP_OFF", "LONG_WEEKEND", "HALF_DAY"}
+    ][:6]
 
     unread_count = sum(
         1 for announcement in announcements_cache if not _read_status_for_user(announcement.id, user.id)
     )
+
+    sorted_announcements = sorted(announcements_cache, key=lambda row: row.created_at, reverse=True)
+    if announcement_limit is not None:
+        sorted_announcements = sorted_announcements[:announcement_limit]
 
     return {
         "user": user.dict(),
@@ -1078,6 +1259,7 @@ def _dashboard_overview(user: User, month: str) -> Dict[str, Any]:
             "remaining": max(0, len(working_days) + len(half_days) - completed),
             "elapsed_working_days": elapsed_working_days,
             "remaining_working_days": remaining_working_days,
+            "days_left_in_month": max(0, calendar.monthrange(today.year, today.month)[1] - today.day),
             "holidays": len(holidays),
             "company_holidays": len(company_holidays),
             "comp_offs": len(comp_offs),
@@ -1093,9 +1275,10 @@ def _dashboard_overview(user: User, month: str) -> Dict[str, Any]:
             "next_company_holiday": next_company_holiday.dict() if next_company_holiday else None,
             "next_company_event": next_company_event.dict() if next_company_event else None,
         },
+        "upcoming_holidays": upcoming_holidays,
         "announcements": [
             {**announcement.dict(), "is_read": _read_status_for_user(announcement.id, user.id)}
-            for announcement in sorted(announcements_cache, key=lambda row: row.created_at, reverse=True)
+            for announcement in sorted_announcements
         ],
         "alerts": attendance_today["alerts"],
         "unread_announcements": unread_count,
@@ -1187,7 +1370,7 @@ def login(payload: LoginRequest, response: Response) -> Dict[str, Any]:
     return {
         "access_token": access_token,
         "token_type": "bearer",
-        "user": user.dict(exclude={"password"}),
+        "user": user.dict(exclude=USER_PRIVATE_FIELDS),
     }
 
 
@@ -1230,8 +1413,64 @@ def register(payload: RegistrationRequest, response: Response) -> Dict[str, Any]
     return {
         "access_token": access_token,
         "token_type": "bearer",
-        "user": user.dict(exclude={"password"}),
+        "user": user.dict(exclude=USER_PRIVATE_FIELDS),
     }
+
+
+@app.post("/auth/forgot-password")
+def forgot_password(payload: ForgotPasswordRequest) -> Dict[str, Any]:
+    _refresh_cache()
+    try:
+        email = _normalize_company_email(payload.email)
+    except HTTPException:
+        return {"message": "If the account exists, a reset code has been sent."}
+
+    user = next((candidate for candidate in users_cache if candidate.email.lower() == email), None)
+    response: Dict[str, Any] = {"message": "If the account exists, a reset code has been sent."}
+    if not user or not user.is_active:
+        return response
+
+    token = f"{secrets.randbelow(1_000_000):06d}"
+    user.password_reset_hash = _hash_reset_token(token)
+    user.password_reset_expires_at = (_now() + timedelta(minutes=PASSWORD_RESET_MINUTES)).isoformat()
+    _upsert_models(USERS_FILE, [user])
+
+    delivered = False
+    try:
+        delivered = _send_password_reset_email(user.email, token)
+    except Exception:
+        delivered = False
+
+    response["delivery"] = "email" if delivered else "manual"
+    if WORKHUB_ENV != "production" or os.getenv("WORKHUB_PASSWORD_RESET_EXPOSE_TOKEN", "").lower() == "true":
+        response["reset_token"] = token
+    return response
+
+
+@app.post("/auth/reset-password")
+def reset_password(payload: ResetPasswordRequest) -> Dict[str, str]:
+    _refresh_cache()
+    email = _normalize_company_email(payload.email)
+    token = payload.token.strip()
+    if len(payload.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    user = next((candidate for candidate in users_cache if candidate.email.lower() == email), None)
+    if not user or not user.password_reset_hash or not user.password_reset_expires_at:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset code")
+    expires_at = datetime.fromisoformat(user.password_reset_expires_at)
+    if _ensure_ist(expires_at) < _now():
+        user.password_reset_hash = None
+        user.password_reset_expires_at = None
+        _upsert_models(USERS_FILE, [user])
+        raise HTTPException(status_code=400, detail="Invalid or expired reset code")
+    if not hmac.compare_digest(user.password_reset_hash, _hash_reset_token(token)):
+        raise HTTPException(status_code=400, detail="Invalid or expired reset code")
+
+    user.password = _hash_password(payload.new_password)
+    user.password_reset_hash = None
+    user.password_reset_expires_at = None
+    _upsert_models(USERS_FILE, [user])
+    return {"message": "Password updated. Sign in with your new password."}
 
 
 @app.get("/me", response_model=UserPublic)
@@ -1430,7 +1669,7 @@ def get_calendar_event(
 
 @app.get("/calendar/today")
 def get_calendar_today(current_user: User = Depends(get_current_user)) -> Dict[str, Any]:
-    return _calendar_event_to_summary(_calendar_event_for_date(_now().date()))
+    return _calendar_event_to_summary(_calendar_event_for_date(_ist_today()))
 
 
 @app.get("/calendar/events")
@@ -1540,7 +1779,7 @@ def create_announcement(
     announcement = Announcement(
         title=payload.title.strip(),
         content=payload.content.strip(),
-        effective_date=payload.effective_date or _now().date().isoformat(),
+        effective_date=payload.effective_date or _ist_today().isoformat(),
     )
     announcements_cache.append(announcement)
     _upsert_models(ANNOUNCEMENTS_FILE, [announcement])
@@ -1583,7 +1822,7 @@ def get_attendance_for_date(
 
 @app.get("/attendance/today")
 def get_attendance_today(current_user: User = Depends(get_current_user)) -> Dict[str, Any]:
-    return _attendance_summary_for_date(current_user, _now().date())
+    return _attendance_summary_for_date(current_user, _ist_today())
 
 
 @app.get("/dashboard/overview")
@@ -1624,12 +1863,12 @@ def _admin_analytics(selected_month: str) -> Dict[str, Any]:
         user_sessions = [
             session
             for session in sessions_cache
-            if session.user_id == user.id and session.start.date().strftime("%Y-%m") == selected_month
+            if session.user_id == user.id and _session_day(session).strftime("%Y-%m") == selected_month
         ]
         work_by_day: Dict[str, float] = defaultdict(float)
         break_by_day: Dict[str, float] = defaultdict(float)
         for session in user_sessions:
-            day_key = session.start.date().isoformat()
+            day_key = _session_day(session).isoformat()
             work_by_day[day_key] += _session_work_minutes(session)
             break_by_day[day_key] += _session_break_minutes(session)
 
@@ -1689,45 +1928,64 @@ def web_bootstrap(
     month: Optional[str] = None,
     current_user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """Return the browser workspace in one round trip.
+    """Return only the browser workspace data needed for first paint.
 
-    Authentication refreshes the Mongo-backed caches once before this handler,
-    so all sections are calculated from one consistent data snapshot.
+    Heavier tab data is loaded through focused web endpoints so dashboard
+    startup does not pay for reports, employee lists, or full history tables.
     """
     selected_month = month or _current_month_label()
-    user_sessions = [
-        session for session in sessions_cache if session.user_id == current_user.id
-    ]
-    user_sessions.sort(key=lambda item: item.start, reverse=True)
-    payload: Dict[str, Any] = {
+    return {
         "generated_at": _iso_now(),
-        "user": current_user.dict(exclude={"password"}),
-        "overview": _dashboard_overview(current_user, selected_month),
-        "sessions": [_session_view(session) for session in user_sessions],
+        "user": current_user.dict(exclude=USER_PRIVATE_FIELDS),
+        "overview": _dashboard_overview(current_user, selected_month, announcement_limit=5),
+        "sessions": [],
+        "announcements": [],
+        "employees": [],
+        "analytics": None,
+        "policy": None,
+    }
+
+
+@app.get("/web/attendance")
+def web_attendance(
+    month: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    selected_month = month or _current_month_label()
+    sessions = [
+        session
+        for session in sessions_cache
+        if session.user_id == current_user.id and _session_day(session).strftime("%Y-%m") == selected_month
+    ]
+    sessions.sort(key=lambda item: item.start, reverse=True)
+    return {
+        "month": selected_month,
+        "sessions": [_session_view(session) for session in sessions],
+    }
+
+
+@app.get("/web/announcements")
+def web_announcements(
+    limit: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    sorted_announcements = sorted(
+        announcements_cache,
+        key=lambda item: item.created_at,
+        reverse=True,
+    )[:limit]
+    return {
         "announcements": [
             {
                 **announcement.dict(),
                 "is_read": _read_status_for_user(announcement.id, current_user.id),
             }
-            for announcement in sorted(
-                announcements_cache,
-                key=lambda item: item.created_at,
-                reverse=True,
-            )
+            for announcement in sorted_announcements
         ],
-        "employees": [],
-        "analytics": None,
-        "policy": None,
+        "unread_announcements": sum(
+            1 for announcement in announcements_cache if not _read_status_for_user(announcement.id, current_user.id)
+        ),
     }
-    if current_user.role == "Admin":
-        payload.update(
-            {
-                "employees": [_user_summary(user) for user in users_cache],
-                "analytics": _admin_analytics(selected_month),
-                "policy": _company_work_policy(),
-            }
-        )
-    return payload
 
 
 @app.get("/admin/users")
