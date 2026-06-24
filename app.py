@@ -207,7 +207,7 @@ def _ensure_ist(value: Optional[datetime]) -> Optional[datetime]:
     if value is None:
         return None
     if value.tzinfo is None:
-        return value.replace(tzinfo=UTC).astimezone(INDIA_TZ)
+        return value.replace(tzinfo=INDIA_TZ)
     return value.astimezone(INDIA_TZ)
 
 
@@ -249,7 +249,7 @@ def _normalize_timestamp_string(value: Optional[str]) -> Optional[str]:
     except ValueError:
         return value
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
+        parsed = parsed.replace(tzinfo=INDIA_TZ)
     return parsed.astimezone(INDIA_TZ).isoformat()
 
 
@@ -844,14 +844,19 @@ def _session_view(session: Session) -> Dict[str, Any]:
         (brk for brk in breaks_cache if brk.session_id == session.id and brk.end is None),
         None,
     )
+    start_ist = _ensure_ist(session.start)
+    end_ist = _ensure_ist(session.end) if session.end else None
     return {
         **session.dict(),
         "work_minutes": round(_session_work_minutes(session), 2),
         "break_minutes": round(_session_break_minutes(session), 2),
-        "active_break": active_break.dict() if active_break else None,
+        "active_break": _break_view(active_break) if active_break else None,
         "is_active": session.end is None,
-        "start": _serialize_datetime(session.start),
-        "end": _serialize_datetime(session.end),
+        "start": start_ist.isoformat(),
+        "end": end_ist.isoformat() if end_ist else None,
+        "attendance_date": start_ist.strftime("%d %b %Y"),
+        "start_time": start_ist.strftime("%I:%M %p"),
+        "end_time": end_ist.strftime("%I:%M %p") if end_ist else None,
     }
 
 
