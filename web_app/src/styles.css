@@ -44,3 +44,4 @@ aside nav button i{background:var(--accent)}
 @keyframes panelSwap{from{opacity:.4;transform:translateY(10px)}to{opacity:1;transform:none}}
 @media(max-width:1050px){.upcoming-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:760px){.live-timer{margin-left:0;padding-left:0;border-left:0;width:100%}.top-actions .connected{font-size:11px}.upcoming-grid{grid-template-columns:1fr;padding:18px}.upcoming-panel{margin-top:16px}}
+.section-loading{margin-bottom:16px;border:1px solid var(--border);border-radius:12px;background:#fff;color:#526175;box-shadow:var(--shadow);padding:12px 14px;display:inline-flex;align-items:center;gap:9px;font-size:12px;font-weight:700}.section-loading svg{width:16px;color:var(--primary)}

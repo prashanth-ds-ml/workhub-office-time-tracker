@@ -1098,7 +1098,7 @@ def _attendance_summary_for_date(user: User, target_date: date) -> Dict[str, Any
     }
 
 
-def _dashboard_overview(user: User, month: str) -> Dict[str, Any]:
+def _dashboard_overview(user: User, month: str, announcement_limit: Optional[int] = None) -> Dict[str, Any]:
     today = _ist_today()
     month_events = _month_calendar(month)
     long_weekends = _derive_long_weekends(month_events)
@@ -1178,6 +1178,10 @@ def _dashboard_overview(user: User, month: str) -> Dict[str, Any]:
         1 for announcement in announcements_cache if not _read_status_for_user(announcement.id, user.id)
     )
 
+    sorted_announcements = sorted(announcements_cache, key=lambda row: row.created_at, reverse=True)
+    if announcement_limit is not None:
+        sorted_announcements = sorted_announcements[:announcement_limit]
+
     return {
         "user": user.dict(),
         "today": attendance_today,
@@ -1208,7 +1212,7 @@ def _dashboard_overview(user: User, month: str) -> Dict[str, Any]:
         "upcoming_holidays": upcoming_holidays,
         "announcements": [
             {**announcement.dict(), "is_read": _read_status_for_user(announcement.id, user.id)}
-            for announcement in sorted(announcements_cache, key=lambda row: row.created_at, reverse=True)
+            for announcement in sorted_announcements
         ],
         "alerts": attendance_today["alerts"],
         "unread_announcements": unread_count,
@@ -1802,45 +1806,64 @@ def web_bootstrap(
     month: Optional[str] = None,
     current_user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """Return the browser workspace in one round trip.
+    """Return only the browser workspace data needed for first paint.
 
-    Authentication refreshes the Mongo-backed caches once before this handler,
-    so all sections are calculated from one consistent data snapshot.
+    Heavier tab data is loaded through focused web endpoints so dashboard
+    startup does not pay for reports, employee lists, or full history tables.
     """
     selected_month = month or _current_month_label()
-    user_sessions = [
-        session for session in sessions_cache if session.user_id == current_user.id
-    ]
-    user_sessions.sort(key=lambda item: item.start, reverse=True)
-    payload: Dict[str, Any] = {
+    return {
         "generated_at": _iso_now(),
         "user": current_user.dict(exclude={"password"}),
-        "overview": _dashboard_overview(current_user, selected_month),
-        "sessions": [_session_view(session) for session in user_sessions],
+        "overview": _dashboard_overview(current_user, selected_month, announcement_limit=5),
+        "sessions": [],
+        "announcements": [],
+        "employees": [],
+        "analytics": None,
+        "policy": None,
+    }
+
+
+@app.get("/web/attendance")
+def web_attendance(
+    month: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    selected_month = month or _current_month_label()
+    sessions = [
+        session
+        for session in sessions_cache
+        if session.user_id == current_user.id and _session_day(session).strftime("%Y-%m") == selected_month
+    ]
+    sessions.sort(key=lambda item: item.start, reverse=True)
+    return {
+        "month": selected_month,
+        "sessions": [_session_view(session) for session in sessions],
+    }
+
+
+@app.get("/web/announcements")
+def web_announcements(
+    limit: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    sorted_announcements = sorted(
+        announcements_cache,
+        key=lambda item: item.created_at,
+        reverse=True,
+    )[:limit]
+    return {
         "announcements": [
             {
                 **announcement.dict(),
                 "is_read": _read_status_for_user(announcement.id, current_user.id),
             }
-            for announcement in sorted(
-                announcements_cache,
-                key=lambda item: item.created_at,
-                reverse=True,
-            )
+            for announcement in sorted_announcements
         ],
-        "employees": [],
-        "analytics": None,
-        "policy": None,
+        "unread_announcements": sum(
+            1 for announcement in announcements_cache if not _read_status_for_user(announcement.id, current_user.id)
+        ),
     }
-    if current_user.role == "Admin":
-        payload.update(
-            {
-                "employees": [_user_summary(user) for user in users_cache],
-                "analytics": _admin_analytics(selected_month),
-                "policy": _company_work_policy(),
-            }
-        )
-    return payload
 
 
 @app.get("/admin/users")
