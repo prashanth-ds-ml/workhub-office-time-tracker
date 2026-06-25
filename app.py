@@ -34,7 +34,16 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, validator
 from email.message import EmailMessage
 
-from storage import claim_first_admin, delete_row, load_rows, save_rows, storage_health, upsert_rows
+from storage import (
+    claim_first_admin,
+    delete_row,
+    find_one_row,
+    load_rows,
+    query_rows,
+    save_rows,
+    storage_health,
+    upsert_rows,
+)
 
 load_dotenv()
 
@@ -395,6 +404,23 @@ def _normalize_company_email(value: str) -> str:
 
 def _load_json(path: Path) -> List[Dict[str, Any]]:
     return load_rows(path)
+
+
+def _query_json(
+    path: Path,
+    filter: Optional[Dict[str, Any]] = None,
+    sort: Optional[List[tuple[str, int]]] = None,
+    limit: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    return query_rows(path, filter=filter, sort=sort, limit=limit)
+
+
+def _find_json(
+    path: Path,
+    filter: Dict[str, Any],
+    sort: Optional[List[tuple[str, int]]] = None,
+) -> Optional[Dict[str, Any]]:
+    return find_one_row(path, filter, sort=sort)
 
 
 def _save_json(path: Path, data: List[Dict[str, Any]]) -> None:
@@ -775,9 +801,9 @@ def _ensure_default_policies() -> None:
 
 
 def get_user_by_id(user_id: str) -> User:
-    for user in users_cache:
-        if user.id == user_id:
-            return user
+    row = _user_row_by_id(user_id)
+    if row:
+        return User(**row)
     raise HTTPException(status_code=404, detail="User not found")
 
 
@@ -799,7 +825,6 @@ def get_current_user(
             raise ValueError("missing subject")
     except (jwt.PyJWTError, ValueError) as exc:
         raise HTTPException(status_code=401, detail="Invalid or expired token") from exc
-    _refresh_cache()
     user = get_user_by_id(user_id)
     if not user.is_active:
         raise HTTPException(status_code=403, detail="This account is inactive")
@@ -864,53 +889,58 @@ def _format_time_from_minutes(minutes: float, anchor: Optional[datetime] = None)
     return result.strftime("%I:%M %p")
 
 
-def _sync_session_breaks(session: Session) -> None:
+def _sync_session_breaks(session: Session, session_breaks: Optional[List[Break]] = None) -> None:
+    session_breaks = session_breaks or _breaks_for_session(session.id)
     session.breaks = [
         {
             "id": brk.id,
             "start": _serialize_datetime(brk.start),
             "end": _serialize_datetime(brk.end),
         }
-        for brk in breaks_cache
-        if brk.session_id == session.id
+        for brk in session_breaks
     ]
 
 
-def _session_break_minutes(session: Session) -> float:
+def _session_break_minutes(session: Session, session_breaks: Optional[List[Break]] = None) -> float:
     total = 0.0
-    for brk in breaks_cache:
-        if brk.session_id != session.id or brk.end is None:
+    for brk in session_breaks or _breaks_for_session(session.id):
+        if brk.end is None:
             continue
         total += _minutes_between(brk.start, brk.end)
     return total
 
 
-def _session_work_minutes(session: Session, reference: Optional[datetime] = None) -> float:
+def _session_work_minutes(
+    session: Session,
+    reference: Optional[datetime] = None,
+    session_breaks: Optional[List[Break]] = None,
+) -> float:
     reference = _ensure_ist(reference or _now())
     end = _ensure_ist(session.end) or reference
     total = _minutes_between(session.start, end)
     active_break = next(
-        (brk for brk in breaks_cache if brk.session_id == session.id and brk.end is None),
+        (brk for brk in (session_breaks or _breaks_for_session(session.id)) if brk.end is None),
         None,
     )
     active_break_minutes = 0.0
     if active_break:
         active_break_minutes = max(0.0, _minutes_between(active_break.start, reference))
-    return max(0.0, total - _session_break_minutes(session) - active_break_minutes)
+    return max(0.0, total - _session_break_minutes(session, session_breaks) - active_break_minutes)
 
 
-def _session_view(session: Session) -> Dict[str, Any]:
-    _sync_session_breaks(session)
+def _session_view(session: Session, session_breaks: Optional[List[Break]] = None) -> Dict[str, Any]:
+    session_breaks = session_breaks or _breaks_for_session(session.id)
+    _sync_session_breaks(session, session_breaks=session_breaks)
     active_break = next(
-        (brk for brk in breaks_cache if brk.session_id == session.id and brk.end is None),
+        (brk for brk in session_breaks if brk.end is None),
         None,
     )
     start_ist = _ensure_ist(session.start)
     end_ist = _ensure_ist(session.end) if session.end else None
     return {
         **session.dict(),
-        "work_minutes": round(_session_work_minutes(session), 2),
-        "break_minutes": round(_session_break_minutes(session), 2),
+        "work_minutes": round(_session_work_minutes(session, session_breaks=session_breaks), 2),
+        "break_minutes": round(_session_break_minutes(session, session_breaks=session_breaks), 2),
         "active_break": _break_view(active_break) if active_break else None,
         "is_active": session.end is None,
         "start": start_ist.isoformat(),
@@ -932,24 +962,19 @@ def _break_view(brk: Break) -> Dict[str, Any]:
 
 def _user_summary(user: User) -> Dict[str, Any]:
     summary = user.dict(exclude=USER_PRIVATE_FIELDS)
-    active_session = next(
-        (session for session in sessions_cache if session.user_id == user.id and session.end is None),
-        None,
-    )
+    active_session = _active_session_for_user(user.id)
     summary["active_session"] = _session_view(active_session) if active_session else None
     return summary
 
 
 def _find_session_for_user(user_id: str, target_date: date) -> Optional[Session]:
-    candidates = [session for session in sessions_cache if session.user_id == user_id and _session_day(session) == target_date]
+    month_key = target_date.strftime("%Y-%m")
+    month_sessions = _sessions_for_user(user_id, month_key)
+    candidates = [session for session in month_sessions if _session_day(session) == target_date]
     if candidates:
         candidates.sort(key=lambda item: item.start, reverse=True)
         return candidates[0]
-    active_sessions = [session for session in sessions_cache if session.user_id == user_id and session.end is None]
-    if active_sessions:
-        active_sessions.sort(key=lambda item: item.start, reverse=True)
-        return active_sessions[0]
-    return None
+    return _active_session_for_user(user_id)
 
 
 def _explicit_calendar_event(event_date: date) -> Optional[CalendarEvent]:
@@ -1047,10 +1072,7 @@ def _generate_announcement(event: Dict[str, Any]) -> Announcement:
 
 
 def _read_status_for_user(announcement_id: str, user_id: str) -> bool:
-    return any(
-        row.announcement_id == announcement_id and row.user_id == user_id and row.acknowledged
-        for row in announcement_reads_cache
-    )
+    return announcement_id in _announcement_read_ids_for_user(user_id)
 
 
 def _month_calendar(month: str) -> List[Dict[str, Any]]:
@@ -1116,6 +1138,80 @@ def _current_month_label(today: Optional[date] = None) -> str:
     return today.strftime("%Y-%m")
 
 
+def _month_bounds(month: str) -> tuple[datetime, datetime]:
+    year, month_num = _parse_month(month)
+    start = datetime(year, month_num, 1, tzinfo=INDIA_TZ)
+    if month_num == 12:
+        end = datetime(year + 1, 1, 1, tzinfo=INDIA_TZ)
+    else:
+        end = datetime(year, month_num + 1, 1, tzinfo=INDIA_TZ)
+    return start, end
+
+
+def _user_row_by_id(user_id: str) -> Optional[Dict[str, Any]]:
+    return _find_json(USERS_FILE, {"id": user_id})
+
+
+def _user_row_by_email(email: str) -> Optional[Dict[str, Any]]:
+    return _find_json(USERS_FILE, {"email": email})
+
+
+def _user_row_by_username(username: str) -> Optional[Dict[str, Any]]:
+    return _find_json(USERS_FILE, {"username": username})
+
+
+def _sessions_for_user(user_id: str, month: Optional[str] = None) -> List[Session]:
+    filter_: Dict[str, Any] = {"user_id": user_id}
+    if month:
+        month_start, month_end = _month_bounds(month)
+        filter_["start"] = {"$gte": month_start, "$lt": month_end}
+    rows = _query_json(SESSIONS_FILE, filter_, sort=[("start", -1)])
+    return [_normalize_session(Session(**row)) for row in rows]
+
+
+def _active_session_for_user(user_id: str) -> Optional[Session]:
+    row = _find_json(SESSIONS_FILE, {"user_id": user_id, "end": None}, sort=[("start", -1)])
+    return _normalize_session(Session(**row)) if row else None
+
+
+def _session_by_id(session_id: str) -> Optional[Session]:
+    row = _find_json(SESSIONS_FILE, {"id": session_id})
+    return _normalize_session(Session(**row)) if row else None
+
+
+def _breaks_for_session(session_id: str) -> List[Break]:
+    rows = _query_json(BREAKS_FILE, {"session_id": session_id}, sort=[("start", 1)])
+    return [_normalize_break(Break(**row)) for row in rows]
+
+
+def _breaks_by_session_ids(session_ids: List[str]) -> Dict[str, List[Break]]:
+    if not session_ids:
+        return {}
+    rows = _query_json(BREAKS_FILE, {"session_id": {"$in": session_ids}}, sort=[("start", 1)])
+    grouped: Dict[str, List[Break]] = defaultdict(list)
+    for row in rows:
+        grouped[row["session_id"]].append(_normalize_break(Break(**row)))
+    return grouped
+
+
+def _active_break_for_session(session_id: str) -> Optional[Break]:
+    row = _find_json(BREAKS_FILE, {"session_id": session_id, "end": None}, sort=[("start", -1)])
+    return _normalize_break(Break(**row)) if row else None
+
+
+def _announcement_rows(limit: Optional[int] = None) -> List[Announcement]:
+    rows = _query_json(ANNOUNCEMENTS_FILE, sort=[("created_at", -1)], limit=limit)
+    return [Announcement(**row) for row in rows]
+
+
+def _announcement_read_ids_for_user(user_id: str) -> set[str]:
+    rows = _query_json(
+        ANNOUNCEMENT_READS_FILE,
+        {"user_id": user_id, "acknowledged": True},
+    )
+    return {row["announcement_id"] for row in rows if row.get("announcement_id")}
+
+
 def _event_requires_attendance(event_type: str) -> bool:
     return event_type in {"WORKING_DAY", "HALF_DAY", "FULL_DAY_SATURDAY"}
 
@@ -1124,8 +1220,9 @@ def _attendance_summary_for_date(user: User, target_date: date) -> Dict[str, Any
     event = _calendar_event_for_date(target_date)
     policy = _get_policy_for_event_type(event["event_type"])
     session = _find_session_for_user(user.id, target_date)
-    work_minutes = _session_work_minutes(session) if session else 0.0
-    break_minutes = _session_break_minutes(session) if session else 0.0
+    session_breaks = _breaks_for_session(session.id) if session else []
+    work_minutes = _session_work_minutes(session, session_breaks=session_breaks) if session else 0.0
+    break_minutes = _session_break_minutes(session, session_breaks=session_breaks) if session else 0.0
     remaining_minutes = max(0.0, policy.target_work_hours * 60 - work_minutes)
     break_remaining = max(0.0, policy.max_break_minutes - break_minutes)
     estimated_completion = None
@@ -1144,7 +1241,7 @@ def _attendance_summary_for_date(user: User, target_date: date) -> Dict[str, Any
         alerts = []
     if session and session.end is None:
         active_break = next(
-            (brk for brk in breaks_cache if brk.session_id == session.id and brk.end is None),
+            (brk for brk in session_breaks if brk.end is None),
             None,
         )
         if active_break:
@@ -1170,15 +1267,14 @@ def _dashboard_overview(user: User, month: str, announcement_limit: Optional[int
     long_weekends = _derive_long_weekends(month_events)
     attendance_today = _attendance_summary_for_date(user, today)
 
-    sessions_for_month = [
-        session for session in sessions_cache if session.user_id == user.id and _session_day(session).strftime("%Y-%m") == month
-    ]
+    sessions_for_month = _sessions_for_user(user.id, month)
+    session_breaks = _breaks_by_session_ids([session.id for session in sessions_for_month])
     month_sessions_by_day: Dict[str, float] = defaultdict(float)
     for session in sessions_for_month:
         day_key = _session_day(session).isoformat()
         month_sessions_by_day[day_key] = max(
             month_sessions_by_day[day_key],
-            _session_work_minutes(session),
+            _session_work_minutes(session, session_breaks=session_breaks.get(session.id, [])),
         )
 
     working_days = [
@@ -1240,13 +1336,9 @@ def _dashboard_overview(user: User, month: str, announcement_limit: Optional[int
         if event["event_type"] in {"HOLIDAY", "COMP_OFF", "LONG_WEEKEND", "HALF_DAY"}
     ][:6]
 
-    unread_count = sum(
-        1 for announcement in announcements_cache if not _read_status_for_user(announcement.id, user.id)
-    )
-
-    sorted_announcements = sorted(announcements_cache, key=lambda row: row.created_at, reverse=True)
-    if announcement_limit is not None:
-        sorted_announcements = sorted_announcements[:announcement_limit]
+    announcement_read_ids = _announcement_read_ids_for_user(user.id)
+    sorted_announcements = _announcement_rows(limit=announcement_limit)
+    unread_count = sum(1 for announcement in sorted_announcements if announcement.id not in announcement_read_ids)
 
     return {
         "user": user.dict(),
@@ -1277,7 +1369,7 @@ def _dashboard_overview(user: User, month: str, announcement_limit: Optional[int
         },
         "upcoming_holidays": upcoming_holidays,
         "announcements": [
-            {**announcement.dict(), "is_read": _read_status_for_user(announcement.id, user.id)}
+            {**announcement.dict(), "is_read": announcement.id in announcement_read_ids}
             for announcement in sorted_announcements
         ],
         "alerts": attendance_today["alerts"],
@@ -1335,22 +1427,13 @@ def med360_launcher() -> Any:
 
 @app.post("/login", response_model=AuthResponse)
 def login(payload: LoginRequest, response: Response) -> Dict[str, Any]:
-    _refresh_cache()
     lookup_email = _normalize_company_email(payload.email) if payload.email else None
     lookup_username = payload.username.lower() if payload.username else None
-    user = next(
-        (
-            candidate
-            for candidate in users_cache
-            if _verify_password(payload.password, candidate.password)
-            and (
-                (lookup_email and candidate.email.lower() == lookup_email)
-                or (lookup_username and candidate.username.lower() == lookup_username)
-            )
-        ),
-        None,
-    )
-    if not user:
+    row = _user_row_by_email(lookup_email) if lookup_email else _user_row_by_username(lookup_username or "")
+    if not row:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    user = User(**row)
+    if not _verify_password(payload.password, user.password):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not user.is_active:
         raise HTTPException(status_code=403, detail="This account is inactive")
@@ -1376,12 +1459,11 @@ def login(payload: LoginRequest, response: Response) -> Dict[str, Any]:
 
 @app.post("/register", response_model=AuthResponse)
 def register(payload: RegistrationRequest, response: Response) -> Dict[str, Any]:
-    _refresh_cache()
     username = payload.username.strip()
     email = _normalize_company_email(payload.email)
     if not username or not email or not payload.password:
         raise HTTPException(status_code=400, detail="Name, email, and password are required")
-    if any(candidate.email.lower() == email for candidate in users_cache):
+    if _user_row_by_email(email):
         raise HTTPException(status_code=400, detail="Email already registered")
     if payload.role == "Admin":
         if not hmac.compare_digest(payload.bootstrap_secret or "", BOOTSTRAP_SECRET):
@@ -1419,13 +1501,13 @@ def register(payload: RegistrationRequest, response: Response) -> Dict[str, Any]
 
 @app.post("/auth/forgot-password")
 def forgot_password(payload: ForgotPasswordRequest) -> Dict[str, Any]:
-    _refresh_cache()
     try:
         email = _normalize_company_email(payload.email)
     except HTTPException:
         return {"message": "If the account exists, a reset code has been sent."}
 
-    user = next((candidate for candidate in users_cache if candidate.email.lower() == email), None)
+    row = _user_row_by_email(email)
+    user = User(**row) if row else None
     response: Dict[str, Any] = {"message": "If the account exists, a reset code has been sent."}
     if not user or not user.is_active:
         return response
@@ -1449,12 +1531,12 @@ def forgot_password(payload: ForgotPasswordRequest) -> Dict[str, Any]:
 
 @app.post("/auth/reset-password")
 def reset_password(payload: ResetPasswordRequest) -> Dict[str, str]:
-    _refresh_cache()
     email = _normalize_company_email(payload.email)
     token = payload.token.strip()
     if len(payload.new_password) < 6:
         raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
-    user = next((candidate for candidate in users_cache if candidate.email.lower() == email), None)
+    row = _user_row_by_email(email)
+    user = User(**row) if row else None
     if not user or not user.password_reset_hash or not user.password_reset_expires_at:
         raise HTTPException(status_code=400, detail="Invalid or expired reset code")
     expires_at = datetime.fromisoformat(user.password_reset_expires_at)
@@ -1567,16 +1649,16 @@ def list_sessions(
     current_user: User = Depends(get_current_user),
 ) -> List[Dict[str, Any]]:
     target_user_id = user_id if current_user.role == "Admin" and user_id else current_user.id
-    sessions = [session for session in sessions_cache if session.user_id == target_user_id]
-    sessions.sort(key=lambda item: item.start, reverse=True)
-    return [_session_view(session) for session in sessions]
+    sessions = _sessions_for_user(target_user_id)
+    session_breaks = _breaks_by_session_ids([session.id for session in sessions])
+    return [_session_view(session, session_breaks=session_breaks.get(session.id, [])) for session in sessions]
 
 
 @app.post("/sessions/{user_id}/start", response_model=Session)
 def start_session(user_id: str, current_user: User = Depends(get_current_user)) -> Session:
     if current_user.id != user_id and current_user.role != "Admin":
         raise HTTPException(status_code=403, detail="No permission to start session for other users")
-    if any(session.user_id == user_id and session.end is None for session in sessions_cache):
+    if _active_session_for_user(user_id):
         raise HTTPException(status_code=400, detail="An active session already exists")
     session = Session(user_id=user_id, start=_now())
     sessions_cache.append(session)
@@ -1586,14 +1668,14 @@ def start_session(user_id: str, current_user: User = Depends(get_current_user)) 
 
 @app.post("/sessions/{session_id}/stop", response_model=Session)
 def stop_session(session_id: str, current_user: User = Depends(get_current_user)) -> Session:
-    session = next((candidate for candidate in sessions_cache if candidate.id == session_id), None)
+    session = _session_by_id(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     if session.user_id != current_user.id and current_user.role != "Admin":
         raise HTTPException(status_code=403, detail="No permission to stop this session")
     if session.end is not None:
         raise HTTPException(status_code=400, detail="Session already stopped")
-    active_break = next((brk for brk in breaks_cache if brk.session_id == session.id and brk.end is None), None)
+    active_break = _active_break_for_session(session.id)
     if active_break:
         active_break.end = _now()
     session.end = _now()
@@ -1606,14 +1688,14 @@ def stop_session(session_id: str, current_user: User = Depends(get_current_user)
 
 @app.post("/sessions/{session_id}/break/start", response_model=Break)
 def start_break(session_id: str, current_user: User = Depends(get_current_user)) -> Break:
-    session = next((candidate for candidate in sessions_cache if candidate.id == session_id), None)
+    session = _session_by_id(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     if session.user_id != current_user.id and current_user.role != "Admin":
         raise HTTPException(status_code=403, detail="No permission to modify this session")
     if session.end is not None:
         raise HTTPException(status_code=400, detail="Session already stopped")
-    if any(brk.session_id == session_id and brk.end is None for brk in breaks_cache):
+    if _active_break_for_session(session_id):
         raise HTTPException(status_code=400, detail="Previous break not ended")
     brk = Break(session_id=session_id, start=_now())
     breaks_cache.append(brk)
@@ -1625,12 +1707,12 @@ def start_break(session_id: str, current_user: User = Depends(get_current_user))
 
 @app.post("/sessions/{session_id}/break/stop", response_model=Break)
 def stop_break(session_id: str, current_user: User = Depends(get_current_user)) -> Break:
-    session = next((candidate for candidate in sessions_cache if candidate.id == session_id), None)
+    session = _session_by_id(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     if session.user_id != current_user.id and current_user.role != "Admin":
         raise HTTPException(status_code=403, detail="No permission to modify this session")
-    brk = next((candidate for candidate in breaks_cache if candidate.session_id == session_id and candidate.end is None), None)
+    brk = _active_break_for_session(session_id)
     if not brk:
         raise HTTPException(status_code=400, detail="No active break found")
     brk.end = _now()
@@ -1642,13 +1724,14 @@ def stop_break(session_id: str, current_user: User = Depends(get_current_user)) 
 
 @app.get("/sessions/{session_id}/breaks")
 def list_session_breaks(session_id: str, current_user: User = Depends(get_current_user)) -> List[Dict[str, Any]]:
-    session = next((candidate for candidate in sessions_cache if candidate.id == session_id), None)
+    session = _session_by_id(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     if session.user_id != current_user.id and current_user.role != "Admin":
         raise HTTPException(status_code=403, detail="No permission to view this session")
-    _sync_session_breaks(session)
-    return [_break_view(brk) for brk in breaks_cache if brk.session_id == session_id]
+    session_breaks = _breaks_for_session(session_id)
+    _sync_session_breaks(session, session_breaks=session_breaks)
+    return [_break_view(brk) for brk in session_breaks]
 
 
 @app.get("/calendar/policy/{event_type}")
@@ -1765,9 +1848,10 @@ def create_company_event(
 
 @app.get("/announcements")
 def list_announcements(current_user: User = Depends(get_current_user)) -> List[Dict[str, Any]]:
+    read_ids = _announcement_read_ids_for_user(current_user.id)
     return [
-        {**announcement.dict(), "is_read": _read_status_for_user(announcement.id, current_user.id)}
-        for announcement in sorted(announcements_cache, key=lambda item: item.created_at, reverse=True)
+        {**announcement.dict(), "is_read": announcement.id in read_ids}
+        for announcement in _announcement_rows()
     ]
 
 
@@ -1791,21 +1875,15 @@ def mark_announcement_read(
     announcement_id: str,
     current_user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    announcement = next((row for row in announcements_cache if row.id == announcement_id), None)
+    announcement = _find_json(ANNOUNCEMENTS_FILE, {"id": announcement_id})
     if not announcement:
         raise HTTPException(status_code=404, detail="Announcement not found")
-    read_row = next(
-        (
-            row
-            for row in announcement_reads_cache
-            if row.announcement_id == announcement_id and row.user_id == current_user.id
-        ),
-        None,
-    )
+    read_row = _find_json(ANNOUNCEMENT_READS_FILE, {"announcement_id": announcement_id, "user_id": current_user.id})
     if not read_row:
         read_row = AnnouncementRead(announcement_id=announcement_id, user_id=current_user.id, read_at=_iso_now(), acknowledged=True)
         announcement_reads_cache.append(read_row)
     else:
+        read_row = AnnouncementRead(**read_row)
         read_row.read_at = _iso_now()
         read_row.acknowledged = True
     _upsert_models(ANNOUNCEMENT_READS_FILE, [read_row])
@@ -1836,13 +1914,22 @@ def get_dashboard_overview(
 @app.get("/admin/dashboard")
 def admin_dashboard(current_user: User = Depends(is_admin)) -> Dict[str, Any]:
     dashboard: Dict[str, Dict[str, float]] = {}
+    all_sessions = [_normalize_session(Session(**row)) for row in _query_json(SESSIONS_FILE, sort=[("start", -1)])]
+    all_breaks = [_normalize_break(Break(**row)) for row in _query_json(BREAKS_FILE, sort=[("start", 1)])]
+    session_breaks: Dict[str, List[Break]] = defaultdict(list)
+    for brk in all_breaks:
+        session_breaks[brk.session_id].append(brk)
+    sessions_by_user: Dict[str, List[Session]] = defaultdict(list)
+    for session in all_sessions:
+        sessions_by_user[session.user_id].append(session)
     for user in users_cache:
-        user_sessions = [session for session in sessions_cache if session.user_id == user.id]
+        user_sessions = sessions_by_user.get(user.id, [])
         total_work = 0.0
         total_break = 0.0
         for session in user_sessions:
-            total_work += _session_work_minutes(session)
-            total_break += _session_break_minutes(session)
+            breaks_for_session = session_breaks.get(session.id, [])
+            total_work += _session_work_minutes(session, session_breaks=breaks_for_session)
+            total_break += _session_break_minutes(session, session_breaks=breaks_for_session)
         dashboard[user.username] = {
             "work_hours": round(total_work / 60, 2),
             "break_minutes": round(total_break, 2),
@@ -1858,19 +1945,25 @@ def _admin_analytics(selected_month: str) -> Dict[str, Any]:
         if _event_requires_attendance(event["event_type"])
     }
     employee_rows: List[Dict[str, Any]] = []
+    month_start, month_end = _month_bounds(selected_month)
+    sessions_in_month = [_normalize_session(Session(**row)) for row in _query_json(
+        SESSIONS_FILE,
+        {"start": {"$gte": month_start, "$lt": month_end}},
+        sort=[("start", 1)],
+    )]
+    sessions_by_user: Dict[str, List[Session]] = defaultdict(list)
+    for session in sessions_in_month:
+        sessions_by_user[session.user_id].append(session)
+    session_breaks = _breaks_by_session_ids([session.id for session in sessions_in_month])
 
     for user in users_cache:
-        user_sessions = [
-            session
-            for session in sessions_cache
-            if session.user_id == user.id and _session_day(session).strftime("%Y-%m") == selected_month
-        ]
         work_by_day: Dict[str, float] = defaultdict(float)
         break_by_day: Dict[str, float] = defaultdict(float)
-        for session in user_sessions:
+        for session in sessions_by_user.get(user.id, []):
             day_key = _session_day(session).isoformat()
-            work_by_day[day_key] += _session_work_minutes(session)
-            break_by_day[day_key] += _session_break_minutes(session)
+            breaks_for_session = session_breaks.get(session.id, [])
+            work_by_day[day_key] += _session_work_minutes(session, session_breaks=breaks_for_session)
+            break_by_day[day_key] += _session_break_minutes(session, session_breaks=breaks_for_session)
 
         days_worked = len([day for day, minutes in work_by_day.items() if minutes > 0])
         total_work = sum(work_by_day.values())
@@ -1952,15 +2045,11 @@ def web_attendance(
     current_user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
     selected_month = month or _current_month_label()
-    sessions = [
-        session
-        for session in sessions_cache
-        if session.user_id == current_user.id and _session_day(session).strftime("%Y-%m") == selected_month
-    ]
-    sessions.sort(key=lambda item: item.start, reverse=True)
+    sessions = _sessions_for_user(current_user.id, selected_month)
+    session_breaks = _breaks_by_session_ids([session.id for session in sessions])
     return {
         "month": selected_month,
-        "sessions": [_session_view(session) for session in sessions],
+        "sessions": [_session_view(session, session_breaks=session_breaks.get(session.id, [])) for session in sessions],
     }
 
 
@@ -1969,22 +2058,17 @@ def web_announcements(
     limit: int = Query(20, ge=1, le=100),
     current_user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    sorted_announcements = sorted(
-        announcements_cache,
-        key=lambda item: item.created_at,
-        reverse=True,
-    )[:limit]
+    sorted_announcements = _announcement_rows(limit=limit)
+    read_ids = _announcement_read_ids_for_user(current_user.id)
     return {
         "announcements": [
             {
                 **announcement.dict(),
-                "is_read": _read_status_for_user(announcement.id, current_user.id),
+                "is_read": announcement.id in read_ids,
             }
             for announcement in sorted_announcements
         ],
-        "unread_announcements": sum(
-            1 for announcement in announcements_cache if not _read_status_for_user(announcement.id, current_user.id)
-        ),
+        "unread_announcements": sum(1 for announcement in _announcement_rows() if announcement.id not in read_ids),
     }
 
 
@@ -2002,7 +2086,7 @@ def admin_create_user(
     email = _normalize_company_email(payload.email)
     if not username or not email or not payload.password:
         raise HTTPException(status_code=400, detail="Name, email, and password are required")
-    if any(user.email.lower() == email for user in users_cache):
+    if _user_row_by_email(email):
         raise HTTPException(status_code=400, detail="Email already registered")
     company_policy = _company_work_policy()
     user = User(
@@ -2029,7 +2113,8 @@ def admin_update_user(
     updates = payload.dict(exclude_unset=True)
     if "email" in updates:
         email = _normalize_company_email(updates["email"])
-        if any(candidate.id != user.id and candidate.email.lower() == email for candidate in users_cache):
+        existing = _user_row_by_email(email)
+        if existing and existing.get("id") != user.id:
             raise HTTPException(status_code=400, detail="Email already registered")
         updates["email"] = email
     if "username" in updates:

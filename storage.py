@@ -73,6 +73,24 @@ class _BaseStorage:
     def reset_first_admin_claim(self) -> None:
         raise NotImplementedError
 
+    def query(
+        self,
+        path: Path,
+        filter: Dict[str, Any] | None = None,
+        sort: List[tuple[str, int]] | None = None,
+        limit: int | None = None,
+    ) -> List[Dict[str, Any]]:
+        raise NotImplementedError
+
+    def find_one(
+        self,
+        path: Path,
+        filter: Dict[str, Any],
+        sort: List[tuple[str, int]] | None = None,
+    ) -> Dict[str, Any] | None:
+        rows = self.query(path, filter=filter, sort=sort, limit=1)
+        return rows[0] if rows else None
+
 
 class _JsonStorage(_BaseStorage):
     def load(self, path: Path) -> List[Dict[str, Any]]:
@@ -116,6 +134,63 @@ class _JsonStorage(_BaseStorage):
     def reset_first_admin_claim(self) -> None:
         return
 
+    @staticmethod
+    def _coerce(value: Any) -> Any:
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value)
+            except ValueError:
+                return value
+        return value
+
+    def _matches(self, row: Dict[str, Any], filter: Dict[str, Any]) -> bool:
+        for key, expected in filter.items():
+            actual = row.get(key)
+            if isinstance(expected, dict):
+                left = self._coerce(actual)
+                for operator, right in expected.items():
+                    right_value = self._coerce(right)
+                    if operator == "$in":
+                        if actual not in right:
+                            return False
+                    elif operator == "$ne":
+                        if actual == right:
+                            return False
+                    elif operator == "$gte":
+                        if left < right_value:
+                            return False
+                    elif operator == "$gt":
+                        if left <= right_value:
+                            return False
+                    elif operator == "$lte":
+                        if left > right_value:
+                            return False
+                    elif operator == "$lt":
+                        if left >= right_value:
+                            return False
+                    else:
+                        raise ValueError(f"Unsupported query operator: {operator}")
+            elif actual != expected:
+                return False
+        return True
+
+    def query(
+        self,
+        path: Path,
+        filter: Dict[str, Any] | None = None,
+        sort: List[tuple[str, int]] | None = None,
+        limit: int | None = None,
+    ) -> List[Dict[str, Any]]:
+        rows = self.load(path)
+        if filter:
+            rows = [row for row in rows if self._matches(row, filter)]
+        if sort:
+            for key, direction in reversed(sort):
+                rows.sort(key=lambda row: self._coerce(row.get(key)), reverse=direction < 0)
+        if limit is not None:
+            rows = rows[:limit]
+        return rows
+
 
 class _MongoStorage(_BaseStorage):
     def __init__(self) -> None:
@@ -156,16 +231,21 @@ class _MongoStorage(_BaseStorage):
     def ensure_indexes(self) -> None:
         self.db["users"].create_index([("id", ASCENDING)], unique=True)
         self.db["users"].create_index([("email", ASCENDING)], unique=True)
+        self.db["users"].create_index([("username", ASCENDING)])
         for collection_name in _FILE_TO_COLLECTION.values():
             self.db[collection_name].create_index([("id", ASCENDING)], unique=True)
         self.db["sessions"].create_index([("user_id", ASCENDING), ("start", ASCENDING)])
+        self.db["sessions"].create_index([("user_id", ASCENDING), ("end", ASCENDING)])
         self.db["breaks"].create_index([("session_id", ASCENDING), ("start", ASCENDING)])
+        self.db["breaks"].create_index([("session_id", ASCENDING), ("end", ASCENDING)])
         self.db["calendar_events"].create_index([("date", ASCENDING)], unique=True)
         self.db["announcements"].create_index([("created_at", ASCENDING)])
+        self.db["announcement_reads"].create_index([("user_id", ASCENDING), ("announcement_id", ASCENDING)])
         self.db["announcement_reads"].create_index(
             [("announcement_id", ASCENDING), ("user_id", ASCENDING)],
             unique=True,
         )
+        self.db["company_events"].create_index([("event_date", ASCENDING)])
 
     def health(self) -> Dict[str, Any]:
         self.client.admin.command("ping")
@@ -191,6 +271,21 @@ class _MongoStorage(_BaseStorage):
     def reset_first_admin_claim(self) -> None:
         self.db["_workhub_system"].delete_one({"_id": "bootstrap_admin"})
 
+    def query(
+        self,
+        path: Path,
+        filter: Dict[str, Any] | None = None,
+        sort: List[tuple[str, int]] | None = None,
+        limit: int | None = None,
+    ) -> List[Dict[str, Any]]:
+        collection = self.db[self._collection_name(path)]
+        cursor = collection.find(filter or {}, {"_id": 0})
+        if sort:
+            cursor = cursor.sort(sort)
+        if limit is not None:
+            cursor = cursor.limit(limit)
+        return [row for row in cursor]
+
 
 def _build_storage() -> _BaseStorage:
     if not _FORCE_JSON:
@@ -211,6 +306,23 @@ _STORAGE = _build_storage()
 
 def load_rows(path: Path) -> List[Dict[str, Any]]:
     return _STORAGE.load(path)
+
+
+def query_rows(
+    path: Path,
+    filter: Dict[str, Any] | None = None,
+    sort: List[tuple[str, int]] | None = None,
+    limit: int | None = None,
+) -> List[Dict[str, Any]]:
+    return _STORAGE.query(path, filter=filter, sort=sort, limit=limit)
+
+
+def find_one_row(
+    path: Path,
+    filter: Dict[str, Any],
+    sort: List[tuple[str, int]] | None = None,
+) -> Dict[str, Any] | None:
+    return _STORAGE.find_one(path, filter, sort=sort)
 
 
 def save_rows(path: Path, rows: Iterable[Dict[str, Any]]) -> None:
