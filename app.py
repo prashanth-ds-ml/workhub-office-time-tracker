@@ -857,9 +857,17 @@ def _get_policy_for_event_type(event_type: str) -> AttendancePolicy:
 
 
 def _parse_date(value: str) -> date:
+    raw = (value or "").strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Invalid date format, expected YYYY-MM-DD")
     try:
-        return date.fromisoformat(value)
-    except ValueError as exc:
+        return date.fromisoformat(raw[:10])
+    except ValueError:
+        try:
+            return datetime.fromisoformat(raw.replace("Z", "+00:00")).date()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid date format, expected YYYY-MM-DD") from exc
+    except TypeError as exc:
         raise HTTPException(status_code=400, detail="Invalid date format, expected YYYY-MM-DD") from exc
 
 

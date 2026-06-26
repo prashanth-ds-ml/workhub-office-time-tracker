@@ -25,9 +25,28 @@ const indiaParts = (value = new Date()) => {
   }).formatToParts(new Date(value));
   return Object.fromEntries(parts.filter(part => part.type !== "literal").map(part => [part.type, part.value]));
 };
+const isoDateFromParts = ({ year, month, day }) => `${year}-${month}-${day}`;
 const today = () => {
   const { year, month, day } = indiaParts();
+  return isoDateFromParts({ year, month, day });
+};
+const normalizeIsoDate = value => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return raw;
+  const { year, month, day } = indiaParts(parsed);
   return `${year}-${month}-${day}`;
+};
+const normalizeIsoMonth = value => {
+  const raw = String(value || "").trim();
+  const isoMatch = raw.match(/^(\d{4})-(\d{2})/);
+  if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}`;
+  const parsed = new Date(`${raw}-01T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return raw;
+  return normalizeIsoDate(parsed).slice(0, 7);
 };
 const currentMonth = () => today().slice(0, 7);
 const monthTitle = key => dateFormatter({ month: "long", year: "numeric" }).format(new Date(`${key}-01T12:00:00Z`));
@@ -281,12 +300,15 @@ function Forms({ type, token, users, policy, onDone, onClose }) {
     e.preventDefault(); setError("");
     try {
       const routes = { event:"/calendar/events", announcement:"/announcements", employee:"/admin/users", policy:"/company/work-policy" };
-      await api(routes[type], { token, method:"POST", body:form }); onDone(); onClose();
+      const body = { ...form };
+      if (type === "event") body.date = normalizeIsoDate(body.date);
+      if (type === "announcement" && body.effective_date) body.effective_date = normalizeIsoDate(body.effective_date);
+      await api(routes[type], { token, method:"POST", body }); onDone(); onClose();
     } catch (err) { setError(err.message); }
   };
   return <form className="modal-form" onSubmit={submit}>
-    {type === "event" && <><label>Event type<select value={form.event_type} onChange={e=>setForm({...form,event_type:e.target.value})}>{Object.keys(eventColors).map(x=><option key={x}>{x}</option>)}</select></label><label>Date<input type="date" required value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/></label><label>Title<input required value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/></label><label>Description<textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})}/></label></>}
-    {type === "announcement" && <><label>Title<input required value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/></label><label>Message<textarea required value={form.content} onChange={e=>setForm({...form,content:e.target.value})}/></label><label>Effective date<input type="date" value={form.effective_date} onChange={e=>setForm({...form,effective_date:e.target.value})}/></label></>}
+    {type === "event" && <><label>Event type<select value={form.event_type} onChange={e=>setForm({...form,event_type:e.target.value})}>{Object.keys(eventColors).map(x=><option key={x}>{x}</option>)}</select></label><label>Date<input type="date" required value={form.date} onChange={e=>setForm({...form,date:normalizeIsoDate(e.target.value)})}/></label><label>Title<input required value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/></label><label>Description<textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})}/></label></>}
+    {type === "announcement" && <><label>Title<input required value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/></label><label>Message<textarea required value={form.content} onChange={e=>setForm({...form,content:e.target.value})}/></label><label>Effective date<input type="date" value={form.effective_date} onChange={e=>setForm({...form,effective_date:normalizeIsoDate(e.target.value)})}/></label></>}
     {type === "employee" && <><label>Full name<input required value={form.username} onChange={e=>setForm({...form,username:e.target.value})}/></label><label>Company email<input required type="email" pattern={`[^@\\s]+@${COMPANY_DOMAIN.replace(".", "\\.")}`} placeholder={`employee@${COMPANY_DOMAIN}`} value={form.email} onChange={e=>setForm({...form,email:e.target.value})}/></label><label>Temporary password<input required minLength="6" type="password" value={form.password} onChange={e=>setForm({...form,password:e.target.value})}/></label><label>Role<select value={form.role} onChange={e=>setForm({...form,role:e.target.value})}><option>User</option><option>Admin</option></select></label></>}
     {type === "policy" && <><div className="form-grid"><label>Office starts<input type="time" value={form.office_hours.start} onChange={e=>setForm({...form,office_hours:{...form.office_hours,start:e.target.value}})}/></label><label>Office ends<input type="time" value={form.office_hours.end} onChange={e=>setForm({...form,office_hours:{...form.office_hours,end:e.target.value}})}/></label></div><div className="form-grid">{Object.entries(form.rules).map(([key,val])=><label key={key}>{key.replaceAll("_"," ")}<input type="number" step="0.5" value={val} onChange={e=>setForm({...form,rules:{...form.rules,[key]:Number(e.target.value)}})}/></label>)}</div></>}
     {error && <div className="error">{error}</div>}<div className="modal-actions"><button type="button" className="ghost" onClick={onClose}>Cancel</button><button className="primary">Save changes</button></div>
@@ -296,7 +318,7 @@ function Forms({ type, token, users, policy, onDone, onClose }) {
 export default function App() {
   const savedUser = readStoredJson(localStorage, "workhub_user");
   const saved = savedUser ? { user: savedUser, token: sessionStorage.getItem("workhub_token") || "" } : null;
-  const [auth, setAuth] = useState(saved), [page, setPage] = useState("dashboard"), [month, setMonth] = useState(today().slice(0,7));
+  const [auth, setAuth] = useState(saved), [page, setPage] = useState("dashboard"), [month, setMonth] = useState(currentMonth());
   const [data, setData] = useState(() => {
     if (!savedUser) return emptyWorkspace;
     return readStoredJson(sessionStorage, `workhub_data:${savedUser.id}:${today().slice(0,7)}`)
@@ -322,7 +344,8 @@ export default function App() {
   const load = useCallback(async () => {
     if (!auth) return; setBusy(true); setError("");
     try {
-      const workspace = await api(`/web/bootstrap?month=${month}`, { token: auth.token });
+      const selectedMonth = normalizeIsoMonth(month);
+      const workspace = await api(`/web/bootstrap?month=${selectedMonth}`, { token: auth.token });
       if (workspace.generated_at) {
         const offset = Date.parse(workspace.generated_at) - Date.now();
         if (Number.isFinite(offset)) {
@@ -332,7 +355,7 @@ export default function App() {
       }
       setData(previous => {
         const next = { ...emptyWorkspace, ...previous, ...workspace };
-        sessionStorage.setItem(`workhub_data:${auth.user.id}:${month}`, JSON.stringify(next));
+        sessionStorage.setItem(`workhub_data:${auth.user.id}:${selectedMonth}`, JSON.stringify(next));
         return next;
       });
       if (workspace.user) {
@@ -346,7 +369,7 @@ export default function App() {
     setSectionBusy(section); setError("");
     try {
       if (section === "attendance") {
-        const result = await api(`/web/attendance?month=${month}`, { token: auth.token });
+        const result = await api(`/web/attendance?month=${normalizeIsoMonth(month)}`, { token: auth.token });
         setData(previous => ({ ...previous, sessions: result.sessions || [] }));
       } else if (section === "announcements") {
         const result = await api("/web/announcements?limit=50", { token: auth.token });
@@ -362,7 +385,7 @@ export default function App() {
         const policy = await api("/company/work-policy", { token: auth.token });
         setData(previous => ({ ...previous, policy }));
       } else if (section === "reports" && admin) {
-        const analytics = await api(`/admin/analytics?month=${month}`, { token: auth.token });
+        const analytics = await api(`/admin/analytics?month=${normalizeIsoMonth(month)}`, { token: auth.token });
         setData(previous => ({ ...previous, analytics }));
       }
     } catch (err) {
