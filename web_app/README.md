@@ -14,6 +14,10 @@ The app uses the current domain for API requests by default. This is the
 production configuration because FastAPI serves the React build. To use a
 separate backend during development, set `VITE_API_URL` in `.env`.
 
+The browser UI is the primary employee and admin surface. It reads its public
+settings from `/web/config`, including the allowed company email domain and
+password recovery policy.
+
 ## Build
 
 ```powershell
@@ -21,6 +25,11 @@ npm run build
 ```
 
 Static production files are generated in `web_app/dist`.
+
+## Beta status
+
+This surface is ready for a small monitored employee beta. Use the built-in
+tests and the root smoke checks before rollout changes.
 
 ## Performance design
 

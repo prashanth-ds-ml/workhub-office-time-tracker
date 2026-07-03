@@ -2,7 +2,7 @@
 
 WorkHub is a web-first office time tracker built with React, FastAPI, and
 MongoDB Atlas. The Windows desktop client remains available as a legacy
-distribution option.
+distribution option for installs that still need it.
 
 ## Project Shape
 
@@ -20,8 +20,8 @@ distribution option.
 - Compact month calendar with month navigation
 - Calendar-driven attendance rules
 - Team announcements
-- Admin announcement posting
-- Windows auto-start helper
+- Admin tools for calendar, employees, policy, and analytics
+- CSV export for admin reports
 
 ## Quick Start
 
@@ -39,8 +39,8 @@ Open `http://127.0.0.1:5173`. The React app uses a single workspace bootstrap
 request and cached static assets for fast repeat loads.
 
 Registration explicitly selects Employee/User or Administrator. Administrator
-registration requires the private bootstrap key. All accounts must use an
-`@sims.healthcare` company email address.
+registration requires the private bootstrap key. All accounts must use the
+company email domain configured by the backend.
 
 ## Production build
 
@@ -52,6 +52,12 @@ npm run build
 
 The existing Render Python service builds `web_app/dist` and FastAPI serves
 both the React application and API from the same URL using `render.yaml`.
+
+## Beta readiness
+
+The web app is ready for a limited employee beta. The current release has been
+verified with the frontend build and test suite plus backend smoke checks.
+Treat it as a monitored beta rather than full production rollout.
 
 ## Legacy Windows package
 
@@ -78,7 +84,7 @@ If you want to run the API separately for debugging:
 uvicorn app:app --reload
 ```
 
-## Windows Auto-Start
+## Legacy Windows Auto-Start
 
 Install:
 

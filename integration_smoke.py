@@ -42,6 +42,8 @@ def run() -> None:
             setattr(app, name, root / current.name)
         app._seed_initial_data()
         app._refresh_cache(force=True)
+        selected_month = app._current_month_label()
+        event_date = app._ist_today().isoformat()
 
         client = TestClient(app.app)
         web_home = client.get("/")
@@ -161,16 +163,16 @@ def run() -> None:
                 headers=admin_headers,
                 json={
                     "event_type": "WORKING_DAY",
-                    "date": "2026-06-22",
+                    "date": event_date,
                     "title": "Integration Working Day",
                     "description": "Smoke test",
                 },
             )
         )
-        assert event["calendar_event"]["date"] == "2026-06-22"
+        assert event["calendar_event"]["date"] == event_date
         assert any(
-            item["date"] == "2026-06-22"
-            for item in expect(client.get("/calendar/events", headers=employee_headers, params={"month": "2026-06"}))
+            item["date"] == event_date
+            for item in expect(client.get("/calendar/events", headers=employee_headers, params={"month": selected_month}))
         )
 
         session = expect(client.post(f"/sessions/{employee['id']}/start", headers=employee_headers))
@@ -186,22 +188,27 @@ def run() -> None:
             client.post(
                 "/announcements",
                 headers=admin_headers,
-                json={"title": "Integration update", "content": "Connected", "effective_date": "2026-06-20"},
+                json={"title": "Integration update", "content": "Connected", "effective_date": event_date},
             )
         )
         listed = expect(client.get("/announcements", headers=employee_headers))
         assert any(item["id"] == announcement["id"] for item in listed)
         expect(client.post(f"/announcements/{announcement['id']}/read", headers=employee_headers))
 
-        overview = expect(client.get("/dashboard/overview", headers=employee_headers, params={"month": "2026-06"}))
+        overview = expect(client.get("/dashboard/overview", headers=employee_headers, params={"month": selected_month}))
         assert "remaining_working_days" in overview["month_summary"]
-        analytics = expect(client.get("/admin/analytics", headers=admin_headers, params={"month": "2026-06"}))
+        analytics = expect(client.get("/admin/analytics", headers=admin_headers, params={"month": selected_month}))
         employee_analytics = next(row for row in analytics["employees"] if row["user_id"] == employee["id"])
         assert employee_analytics["days_worked"] == 1
-        workspace = expect(client.get("/web/bootstrap", headers=admin_headers, params={"month": "2026-06"}))
-        assert workspace["overview"]["month"] == "2026-06"
-        assert workspace["analytics"]["summary"]["employees"] >= 2
-        assert any(row["id"] == employee["id"] for row in workspace["employees"])
+        workspace = expect(client.get("/web/bootstrap", headers=admin_headers, params={"month": selected_month}))
+        assert workspace["overview"]["month"] == selected_month
+        assert workspace["analytics"] is None
+        assert workspace["employees"] == []
+        assert workspace["sessions"] == []
+        web_attendance = expect(client.get("/web/attendance", headers=employee_headers, params={"month": selected_month}))
+        assert any(row["id"] == session_id for row in web_attendance["sessions"])
+        web_announcements = expect(client.get("/web/announcements?limit=50", headers=employee_headers))
+        assert any(row["id"] == announcement["id"] for row in web_announcements["announcements"])
         expect(client.post("/logout", headers=admin_headers))
 
         expect(client.patch(f"/admin/users/{employee['id']}", headers=admin_headers, json={"is_active": False}))

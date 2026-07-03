@@ -81,7 +81,6 @@ app.add_middleware(
         "http://localhost:5173",
         "http://127.0.0.1:4173",
         "http://localhost:4173",
-        "null",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -198,6 +197,7 @@ DEFAULT_POLICIES: List[Dict[str, Any]] = [
 ]
 
 DEFAULT_COMPANY_WORK_POLICY: Dict[str, Any] = {
+    "_singleton": "company_work_policy",
     "office_hours": {"start": "09:00", "end": "18:00"},
     "rules": {
         "min_work_hours": 6.0,
@@ -376,6 +376,16 @@ def _send_password_reset_email(email: str, token: str) -> bool:
             smtp.login(smtp_user, smtp_password)
         smtp.send_message(message)
     return True
+
+
+def _password_reset_self_service_available() -> bool:
+    if WORKHUB_ENV != "production":
+        return True
+    if os.getenv("WORKHUB_PASSWORD_RESET_EXPOSE_TOKEN", "").lower() == "true":
+        return True
+    smtp_host = os.getenv("WORKHUB_SMTP_HOST", "").strip()
+    smtp_from = os.getenv("WORKHUB_SMTP_FROM", "").strip()
+    return bool(smtp_host and smtp_from)
 
 
 def _create_access_token(user: "User") -> str:
@@ -807,6 +817,14 @@ def get_user_by_id(user_id: str) -> User:
     raise HTTPException(status_code=404, detail="User not found")
 
 
+def _sync_cached_user(user: User) -> None:
+    for index, cached_user in enumerate(users_cache):
+        if cached_user.id == user.id:
+            users_cache[index] = user
+            return
+    users_cache.append(user)
+
+
 def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
     session_token: Optional[str] = Cookie(default=None, alias=AUTH_COOKIE_NAME),
@@ -866,6 +884,11 @@ def _parse_date(value: str) -> date:
         try:
             return datetime.fromisoformat(raw.replace("Z", "+00:00")).date()
         except ValueError as exc:
+            for pattern in ("%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d", "%d.%m.%Y"):
+                try:
+                    return datetime.strptime(raw, pattern).date()
+                except ValueError:
+                    continue
             raise HTTPException(status_code=400, detail="Invalid date format, expected YYYY-MM-DD") from exc
     except TypeError as exc:
         raise HTTPException(status_code=400, detail="Invalid date format, expected YYYY-MM-DD") from exc
@@ -1394,6 +1417,16 @@ def health() -> Dict[str, Any]:
         raise HTTPException(status_code=503, detail=f"Storage unavailable: {exc}") from exc
 
 
+@app.get("/web/config")
+def web_config() -> Dict[str, Any]:
+    return {
+        "company_email_domain": ALLOWED_EMAIL_DOMAIN,
+        "password_reset_minutes": PASSWORD_RESET_MINUTES,
+        "password_reset_self_service": _password_reset_self_service_available(),
+        "allow_self_registration": ALLOW_SELF_REGISTRATION,
+    }
+
+
 @app.get("/")
 def root() -> Any:
     if WEB_INDEX_FILE.is_file():
@@ -1447,6 +1480,7 @@ def login(payload: LoginRequest, response: Response) -> Dict[str, Any]:
         raise HTTPException(status_code=403, detail="This account is inactive")
     if not user.password.startswith("pbkdf2_sha256$"):
         user.password = _hash_password(payload.password)
+        _sync_cached_user(user)
         _upsert_models(USERS_FILE, [user])
     access_token = _create_access_token(user)
     response.set_cookie(
@@ -1523,6 +1557,7 @@ def forgot_password(payload: ForgotPasswordRequest) -> Dict[str, Any]:
     token = f"{secrets.randbelow(1_000_000):06d}"
     user.password_reset_hash = _hash_reset_token(token)
     user.password_reset_expires_at = (_now() + timedelta(minutes=PASSWORD_RESET_MINUTES)).isoformat()
+    _sync_cached_user(user)
     _upsert_models(USERS_FILE, [user])
 
     delivered = False
@@ -1551,6 +1586,7 @@ def reset_password(payload: ResetPasswordRequest) -> Dict[str, str]:
     if _ensure_ist(expires_at) < _now():
         user.password_reset_hash = None
         user.password_reset_expires_at = None
+        _sync_cached_user(user)
         _upsert_models(USERS_FILE, [user])
         raise HTTPException(status_code=400, detail="Invalid or expired reset code")
     if not hmac.compare_digest(user.password_reset_hash, _hash_reset_token(token)):
@@ -1559,6 +1595,7 @@ def reset_password(payload: ResetPasswordRequest) -> Dict[str, str]:
     user.password = _hash_password(payload.new_password)
     user.password_reset_hash = None
     user.password_reset_expires_at = None
+    _sync_cached_user(user)
     _upsert_models(USERS_FILE, [user])
     return {"message": "Password updated. Sign in with your new password."}
 
@@ -1590,6 +1627,7 @@ def set_office_hours(
         raise HTTPException(status_code=403, detail="Admin rights required")
     user = get_user_by_id(user_id)
     user.office_hours = {"start": payload.start, "end": payload.end}
+    _sync_cached_user(user)
     _upsert_models(USERS_FILE, [user])
     return {"message": f"Office hours set for {user.username}"}
 
@@ -1606,6 +1644,7 @@ def set_rules(
     current_rules = user.rules or {}
     current_rules.update({key: value for key, value in payload.dict().items() if value is not None})
     user.rules = current_rules
+    _sync_cached_user(user)
     _upsert_models(USERS_FILE, [user])
     return {"message": f"Rules set for {user.username}"}
 
@@ -1630,6 +1669,7 @@ def set_company_work_policy(
     current_user: User = Depends(is_admin),
 ) -> Dict[str, Any]:
     policy = {
+        "_singleton": "company_work_policy",
         "office_hours": payload.office_hours.dict(),
         "rules": {key: value for key, value in payload.rules.dict().items() if value is not None},
     }
@@ -2140,6 +2180,7 @@ def admin_update_user(
 
     for key, value in updates.items():
         setattr(user, key, value)
+    _sync_cached_user(user)
     changed_sessions: List[Session] = []
     changed_breaks: List[Break] = []
     if user.is_active is False:

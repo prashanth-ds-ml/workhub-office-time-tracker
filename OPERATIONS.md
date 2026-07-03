@@ -3,11 +3,11 @@
 ## Live architecture
 
 ```text
-Windows desktop clients
+Browser clients
         |
         | HTTPS + JWT
         v
-Render Web Service
+Render Web Service serving React + API
         |
         | TLS MongoDB connection
         v
@@ -18,11 +18,11 @@ MongoDB Atlas database: workhub
 - Health check: `https://workhub-api-u07x.onrender.com/health`
 - API documentation: `https://workhub-api-u07x.onrender.com/docs`
 - Source repository: `https://github.com/prashanth-ds-ml/workhub-office-time-tracker`
-- Desktop release: `release\WorkHub-Installer.zip`
+- Legacy desktop release: `release\WorkHub-Installer.zip`
 - Server release: `release\WorkHub-Server.zip`
 
 MongoDB credentials and server secrets must remain in Render environment
-variables. Never distribute them with the desktop application.
+variables. Never distribute them with any client package.
 
 ## Render environment
 
@@ -37,10 +37,15 @@ The Render service requires:
 | `WORKHUB_JWT_EXPIRE_HOURS=12` | Login-token lifetime |
 | `WORKHUB_BOOTSTRAP_SECRET` | Private key required for Admin registration |
 | `WORKHUB_ALLOW_SELF_REGISTRATION=true` | Allows User self-registration |
+| `WORKHUB_CORS_ORIGINS` | Optional comma-separated browser origins for custom web hosts |
 | `PYTHON_VERSION=3.10.11` | Compatible Render Python runtime |
 
 Do not expose `MONGO_URI`, `WORKHUB_JWT_SECRET`, or
 `WORKHUB_BOOTSTRAP_SECRET`.
+
+If WorkHub is served from a browser origin other than the default local Vite
+origins or the same hosted domain as FastAPI, set `WORKHUB_CORS_ORIGINS`
+explicitly. Credentialed requests no longer allow the `"null"` origin.
 
 ## Free Render behavior
 
@@ -156,7 +161,7 @@ git push
 
 Render automatically deploys the latest `main` commit.
 
-Desktop changes require:
+Legacy desktop changes require:
 
 ```powershell
 .\build_share_package.ps1
@@ -237,7 +242,7 @@ The Start menu shortcut is also installed.
 - Never distribute MongoDB credentials.
 - Never distribute the JWT secret.
 - Give the bootstrap key only to real administrators.
-- Employee laptops communicate only with the Render HTTPS API.
+- Employee browsers communicate only with the Render HTTPS API.
 - Passwords are stored as PBKDF2 hashes.
 - Production mode rejects JSON fallback.
 - Admin and User permissions are enforced by the backend, not only by the UI.
@@ -249,3 +254,8 @@ Use MongoDB Atlas backup/export facilities before destructive changes.
 `reset_workhub_data.py --confirm` removes operational data and resets the
 Admin-claim marker. It must only be run intentionally by an administrator.
 
+## Beta rollout
+
+For a small employee beta, keep the rollout limited to a few browser users,
+confirm the login, attendance, announcements, and admin edit paths, and watch
+for mobile/table responsiveness issues during the first few days.

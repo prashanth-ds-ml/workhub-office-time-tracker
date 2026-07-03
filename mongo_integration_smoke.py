@@ -7,6 +7,7 @@ os.environ["WORKHUB_ENV"] = "production"
 os.environ["WORKHUB_JWT_SECRET"] = "mongo-smoke-test-secret-not-for-production"
 os.environ["WORKHUB_BOOTSTRAP_SECRET"] = "mongo-bootstrap-secret"
 os.environ["WORKHUB_ALLOW_SELF_REGISTRATION"] = "true"
+os.environ["WORKHUB_EMAIL_DOMAIN"] = "mongo.test"
 os.environ["MONGO_DB"] = f"wh_smoke_{uuid.uuid4().hex[:20]}"
 
 from fastapi.testclient import TestClient

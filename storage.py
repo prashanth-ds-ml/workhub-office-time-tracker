@@ -215,9 +215,13 @@ class _MongoStorage(_BaseStorage):
         collection = self.db[self._collection_name(path)]
         payload = [_jsonify(row) for row in rows]
         operations = [
-            UpdateOne({"id": row["id"]}, {"$set": row}, upsert=True)
+            UpdateOne(
+                {"id": row["id"]} if row.get("id") else {"_singleton": row["_singleton"]},
+                {"$set": row},
+                upsert=True,
+            )
             for row in payload
-            if row.get("id")
+            if row.get("id") or row.get("_singleton")
         ]
         if operations:
             collection.bulk_write(operations, ordered=False)
@@ -240,6 +244,7 @@ class _MongoStorage(_BaseStorage):
         self.db["breaks"].create_index([("session_id", ASCENDING), ("end", ASCENDING)])
         self.db["calendar_events"].create_index([("date", ASCENDING)], unique=True)
         self.db["announcements"].create_index([("created_at", ASCENDING)])
+        self.db["company_work_policy"].create_index([("_singleton", ASCENDING)], unique=True)
         self.db["announcement_reads"].create_index([("user_id", ASCENDING), ("announcement_id", ASCENDING)])
         self.db["announcement_reads"].create_index(
             [("announcement_id", ASCENDING), ("user_id", ASCENDING)],
