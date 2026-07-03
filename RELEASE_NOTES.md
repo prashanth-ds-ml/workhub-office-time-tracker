@@ -53,6 +53,7 @@
 - Auto-announcement generation when calendar changes
 - Team attendance reports
 - React web app now serves as the primary beta surface
+- Browser forgot-password flow remains available
 
 #### Attendance Policy Engine
 - Rules derived from calendar event types
@@ -83,6 +84,7 @@
 - MongoDB-backed persistence with JSON fallback
 - Auto-announcement generator
 - Web-only beta rollout supported with browser config, session-scoped state, and report CSV export
+- Admin calendar date entry normalizes common formats before save
 
 ---
 

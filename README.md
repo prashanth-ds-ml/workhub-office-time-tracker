@@ -58,6 +58,8 @@ both the React application and API from the same URL using `render.yaml`.
 The web app is ready for a limited employee beta. The current release has been
 verified with the frontend build and test suite plus backend smoke checks.
 Treat it as a monitored beta rather than full production rollout.
+Password recovery is available again in the browser login flow, and date
+inputs are normalized before save in the admin calendar dialog.
 
 ## Legacy Windows package
 

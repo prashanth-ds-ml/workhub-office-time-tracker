@@ -82,10 +82,10 @@ export default function Auth({ api, companyEmail, config, onAuth }) {
         {form.role === "Admin" && <label>Admin bootstrap key<input required value={form.bootstrap_secret} onChange={e => setForm({ ...form, bootstrap_secret: e.target.value })} /></label>}</>}
         {error && <div className="error">{error}</div>}
         {notice && <div className="notice">{notice}</div>}
-        <button className="primary wide" disabled={busy || (mode === "forgot" && !resetAvailable)}>{busy ? "Connecting..." : mode === "login" ? "Sign in" : mode === "register" ? "Create account" : mode === "forgot" ? "Send reset code" : "Update password"}</button>
+        <button className="primary wide" disabled={busy}>{busy ? "Connecting..." : mode === "login" ? "Sign in" : mode === "register" ? "Create account" : mode === "forgot" ? "Send reset code" : "Update password"}</button>
       </form>
       <div className="auth-links">
-        {mode === "login" && resetAvailable && <button className="text-button" onClick={() => { setMode("forgot"); setError(""); setNotice(""); }}>Forgot password?</button>}
+        {mode === "login" && <button className="text-button" onClick={() => { setMode("forgot"); setError(""); setNotice(""); }}>Forgot password?</button>}
         <button className="text-button" onClick={() => { setMode(mode === "login" ? "register" : "login"); setError(""); setNotice(""); }}>
           {mode === "login" ? "New to WorkHub? Create an account" : "Already have an account? Sign in"}
         </button>

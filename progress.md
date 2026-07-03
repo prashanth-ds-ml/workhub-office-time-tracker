@@ -20,3 +20,4 @@
 | 2026‑07‑02 | Web session state tightened | ✅ | React auth/workspace state moved to a session-scoped storage model. |
 | 2026‑07‑02 | Reports CSV export added | ✅ | Admin analytics now export a real CSV artifact from the web app. |
 | 2026‑07‑03 | Beta readiness pass | ✅ | Web app audited for rollout, docs updated, and current verification rerun for employee beta. |
+| 2026‑07‑03 | Recovery and date fixes | ✅ | Browser forgot-password entry restored and admin calendar dates now normalize common formats before save. |

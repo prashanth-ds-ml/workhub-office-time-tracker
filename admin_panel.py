@@ -90,6 +90,17 @@ class CalendarEventDialog(tk.Toplevel):
         ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side="left", padx=(0, 8))
         ttk.Button(buttons, text="Save event", style="Primary.TButton", command=self.submit).pack(side="left")
 
+    def _normalize_date(self, raw: str) -> str:
+        value = (raw or "").strip()
+        if not value:
+            raise ValueError
+        for pattern in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d", "%d.%m.%Y"):
+            try:
+                return datetime.strptime(value, pattern).date().isoformat()
+            except ValueError:
+                continue
+        return date.fromisoformat(value[:10]).isoformat()
+
     def _set_default_title(self, *_args: Any) -> None:
         defaults = {
             "WORKING_DAY": "Working Day",
@@ -106,15 +117,15 @@ class CalendarEventDialog(tk.Toplevel):
 
     def submit(self) -> None:
         try:
-            date.fromisoformat(self.date_var.get().strip())
+            event_date = self._normalize_date(self.date_var.get())
         except ValueError:
-            messagebox.showerror("Calendar event", "Use date format YYYY-MM-DD.", parent=self)
+            messagebox.showerror("Calendar event", "Use a valid date.", parent=self)
             return
         if not self.title_var.get().strip():
             messagebox.showerror("Calendar event", "Title is required.", parent=self)
             return
         self.result = {
-            "date": self.date_var.get().strip(),
+            "date": event_date,
             "event_type": self.type_var.get(),
             "title": self.title_var.get().strip(),
             "description": self.description.get("1.0", "end").strip() or None,

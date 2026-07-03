@@ -54,9 +54,9 @@ test("escapes multi-dot company domains in the email pattern", () => {
   expect(screen.getByLabelText("Company email")).toHaveAttribute("pattern", String.raw`[^@\s]+@auth\.dev\.med360\.test`);
 });
 
-test("hides forgot-password entry point when self-service reset is disabled", () => {
+test("keeps forgot-password entry point visible when self-service reset is disabled", () => {
   renderAuth({ config: { password_reset_self_service: false } });
-  expect(screen.queryByRole("button", { name: "Forgot password?" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Forgot password?" })).toBeInTheDocument();
 });
 
 test("limits registration to administrators when self-registration is disabled", async () => {

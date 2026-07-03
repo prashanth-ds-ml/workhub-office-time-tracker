@@ -30,6 +30,8 @@ Static production files are generated in `web_app/dist`.
 
 This surface is ready for a small monitored employee beta. Use the built-in
 tests and the root smoke checks before rollout changes.
+The login screen exposes password recovery again, and admin calendar dates are
+normalized before save so common date-entry formats do not fail validation.
 
 ## Performance design
 
