@@ -309,26 +309,26 @@ class _PostgresStorage(_BaseStorage):
                     f'ON "{table}" ({expr})'
                 )
 
-            index("users", "users_email_idx", "((data ->> 'email'))", unique=True)
-            index("users", "users_username_idx", "((data ->> 'username'))")
-            index("sessions", "sessions_user_start_idx", "((data ->> 'user_id'), (data ->> 'start'))")
-            index("sessions", "sessions_user_end_idx", "((data ->> 'user_id'), (data ->> 'end'))")
-            index("breaks", "breaks_session_start_idx", "((data ->> 'session_id'), (data ->> 'start'))")
-            index("breaks", "breaks_session_end_idx", "((data ->> 'session_id'), (data ->> 'end'))")
-            index("calendar_events", "calendar_events_date_idx", "((data ->> 'date'))", unique=True)
-            index("announcements", "announcements_created_at_idx", "((data ->> 'created_at'))")
+            index("users", "users_email_idx", "(data ->> 'email')", unique=True)
+            index("users", "users_username_idx", "(data ->> 'username')")
+            index("sessions", "sessions_user_start_idx", "(data ->> 'user_id'), (data ->> 'start')")
+            index("sessions", "sessions_user_end_idx", "(data ->> 'user_id'), (data ->> 'end')")
+            index("breaks", "breaks_session_start_idx", "(data ->> 'session_id'), (data ->> 'start')")
+            index("breaks", "breaks_session_end_idx", "(data ->> 'session_id'), (data ->> 'end')")
+            index("calendar_events", "calendar_events_date_idx", "(data ->> 'date')", unique=True)
+            index("announcements", "announcements_created_at_idx", "(data ->> 'created_at')")
             index(
                 "announcement_reads",
                 "announcement_reads_user_ann_idx",
-                "((data ->> 'user_id'), (data ->> 'announcement_id'))",
+                "(data ->> 'user_id'), (data ->> 'announcement_id')",
             )
             index(
                 "announcement_reads",
                 "announcement_reads_ann_user_idx",
-                "((data ->> 'announcement_id'), (data ->> 'user_id'))",
+                "(data ->> 'announcement_id'), (data ->> 'user_id')",
                 unique=True,
             )
-            index("company_events", "company_events_date_idx", "((data ->> 'event_date'))")
+            index("company_events", "company_events_date_idx", "(data ->> 'event_date')")
 
     def health(self) -> Dict[str, Any]:
         with self.conn.cursor() as cur:

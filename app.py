@@ -1938,17 +1938,17 @@ def mark_announcement_read(
     return {"message": "Announcement marked read"}
 
 
+@app.get("/attendance/today")
+def get_attendance_today(current_user: User = Depends(get_current_user)) -> Dict[str, Any]:
+    return _attendance_summary_for_date(current_user, _ist_today())
+
+
 @app.get("/attendance/{target_date}")
 def get_attendance_for_date(
     target_date: str,
     current_user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
     return _attendance_summary_for_date(current_user, _parse_date(target_date))
-
-
-@app.get("/attendance/today")
-def get_attendance_today(current_user: User = Depends(get_current_user)) -> Dict[str, Any]:
-    return _attendance_summary_for_date(current_user, _ist_today())
 
 
 @app.get("/dashboard/overview")
