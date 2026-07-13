@@ -1,14 +1,14 @@
 # WorkHub v1.1
 
 WorkHub is a web-first office time tracker built with React, FastAPI, and
-MongoDB Atlas. The Windows desktop client remains available as a legacy
-distribution option for installs that still need it.
+Postgres (Vercel Postgres/Neon). The Windows desktop client remains available
+as a legacy distribution option for installs that still need it.
 
 ## Project Shape
 
 - Primary web UI: `web_app/`
 - Central API/backend: `app.py`
-- Production storage: MongoDB Atlas
+- Production storage: Postgres (Vercel Postgres/Neon)
 - Legacy Windows UI: `desktop_app.py`
 
 ## Main Features
@@ -50,8 +50,9 @@ npm ci
 npm run build
 ```
 
-The existing Render Python service builds `web_app/dist` and FastAPI serves
-both the React application and API from the same URL using `render.yaml`.
+Vercel builds `web_app/dist` as a static site and deploys `api/index.py`
+(which mounts `app.py`'s FastAPI app under `/api`) as a serverless function,
+per `vercel.json`. See `VERCEL_DEPLOYMENT.md` for the full setup.
 
 ## Beta readiness
 
@@ -102,6 +103,6 @@ python desktop_app.py --uninstall-startup
 
 ## Notes
 
-- MongoDB is the primary live data store.
+- Postgres is the primary live data store.
 - JSON files remain available as a local fallback.
 - The desktop app minimizes to the background instead of exiting on close.

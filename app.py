@@ -1,7 +1,7 @@
 """FastAPI backend for Office Time Tracker / WorkHub v1.1.
 
 The backend keeps the same calendar-driven attendance rules and summary APIs,
-but now persists to MongoDB by default with a JSON fallback for local dev.
+but now persists to Postgres by default with a JSON fallback for local dev.
 The Python desktop app uses this API for the office dashboard experience.
 """
 

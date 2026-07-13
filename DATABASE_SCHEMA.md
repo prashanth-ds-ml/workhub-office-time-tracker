@@ -2,9 +2,14 @@
 
 ## Overview
 
-This document describes the MongoDB collections used by WorkHub v1.1. The backend can fall back to the JSON files in `data/` for local development, but MongoDB is the primary store.
+This document describes the Postgres tables used by WorkHub v1.1. The backend
+can fall back to the JSON files in `data/` for local development, but Postgres
+is the primary store. Each table has the shape `id TEXT PRIMARY KEY (or
+_singleton TEXT PRIMARY KEY for the one config doc), data JSONB NOT NULL` —
+the JSON shapes below live inside the `data` column, unchanged from the
+previous MongoDB documents.
 
-## Collection Structure
+## Table Structure
 
 ```
 users
@@ -222,12 +227,21 @@ calendar_events
 
 ### v1.0 → v1.1
 
-The migration script still seeds the same records, but the backend now writes to MongoDB when available:
+The migration script still seeds the same records, but the backend now writes to Postgres when available:
 ```bash
 python scripts/migrate_v1.0_to_v1.1.py
 ```
 
-If MongoDB is unavailable, the backend falls back to `data/*.json` for local development.
+If Postgres is unavailable, the backend falls back to `data/*.json` for local development.
+
+### v1.1 → v1.2 (MongoDB → Postgres)
+
+```bash
+python initialize_postgres.py
+python migrate_json_to_postgres.py --source data --confirm
+```
+
+See `MIGRATION.md` for details.
 
 ## Queries
 
