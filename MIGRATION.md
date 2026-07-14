@@ -197,3 +197,32 @@ For migration issues, refer to:
 - BUILD_ORDER.md for step-by-step guidance
 - API docs at http://127.0.0.1:8000/docs
 - Test scripts in `tests/test_v1.1_migration.py`
+
+# Migration Guide – v1.1 to v1.2 (MongoDB → Postgres, Render → Vercel)
+
+v1.2 replaces the MongoDB storage backend with Postgres (Vercel
+Postgres/Neon) and moves hosting from Render to Vercel. No API or data-shape
+changes — every collection becomes a Postgres table with the same JSON
+document stored in a `data JSONB` column. See `DATABASE_SCHEMA.md` for the
+table shape and `VERCEL_DEPLOYMENT.md` for the hosting setup.
+
+### Steps
+
+1. Provision a Postgres database (Vercel Postgres/Neon) and set `POSTGRES_URL`.
+2. Run `python initialize_postgres.py` to create tables/indexes and seed
+   default attendance policies.
+3. If migrating existing data out of MongoDB Atlas: export each collection to
+   JSON (or point a modified `migrate_json_to_postgres.py` at a live Mongo
+   connection instead of `data/*.json`), then run:
+   ```bash
+   python migrate_json_to_postgres.py --source <dir> --confirm
+   ```
+4. Remove `MONGO_URI`/`MONGO_DB` env vars; add `POSTGRES_URL` in their place.
+5. Deploy via Vercel (`vercel.json` + `api/index.py`) instead of Render
+   (`render.yaml`, now removed).
+
+### Breaking Changes
+
+None for API consumers. `storage.storage_backend()` now returns `"postgres"`
+instead of `"mongo"`; anything asserting on that value (tests, `/health`
+checks) must be updated — already done in `postgres_integration_smoke.py`.

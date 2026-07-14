@@ -7,17 +7,21 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
+import psycopg
+from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 from dotenv import load_dotenv
-from pymongo import ASCENDING, MongoClient, ReturnDocument, UpdateOne
-from pymongo.errors import PyMongoError
 
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 
-_MONGO_URI = os.getenv("MONGO_URI") or os.getenv("MONGODB_URI") or "mongodb://127.0.0.1:27017"
-_MONGO_DB = os.getenv("MONGO_DB", "office_time_tracker")
+_POSTGRES_URL = (
+    os.getenv("POSTGRES_URL")
+    or os.getenv("POSTGRES_URL_NON_POOLING")
+    or os.getenv("DATABASE_URL")
+)
 _FORCE_JSON = os.getenv("WORKHUB_STORAGE", "").lower() == "json"
 _PRODUCTION = os.getenv("WORKHUB_ENV", "development").lower() == "production"
 INDIA_TZ = timezone(timedelta(hours=5, minutes=30))
@@ -46,6 +50,14 @@ def _jsonify(value: Any) -> Any:
     if isinstance(value, tuple):
         return [_jsonify(item) for item in value]
     return value
+
+
+def _to_text(value: Any) -> str:
+    """Render a filter value the same way `data ->> key` renders a stored JSON scalar."""
+    value = _jsonify(value)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
 
 
 class _BaseStorage:
@@ -192,89 +204,157 @@ class _JsonStorage(_BaseStorage):
         return rows
 
 
-class _MongoStorage(_BaseStorage):
-    def __init__(self) -> None:
-        self.client = MongoClient(_MONGO_URI, serverSelectionTimeoutMS=1500)
-        self.client.admin.command("ping")
-        self.db = self.client[_MONGO_DB]
+import re
 
-    def _collection_name(self, path: Path) -> str:
+_SAFE_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _safe_key(key: str) -> str:
+    if not _SAFE_KEY.match(key):
+        raise ValueError(f"Unsafe sort key: {key!r}")
+    return key
+
+
+_OPERATORS = {
+    "$in": "= ANY(%s)",
+    "$ne": "!=",
+    "$gte": ">=",
+    "$gt": ">",
+    "$lte": "<=",
+    "$lt": "<",
+}
+
+
+class _PostgresStorage(_BaseStorage):
+    def __init__(self) -> None:
+        self.conn = psycopg.connect(_POSTGRES_URL, autocommit=True, row_factory=dict_row)
+        self.conn.execute("SELECT 1")
+
+    def _table(self, path: Path) -> str:
         return _FILE_TO_COLLECTION.get(path.name, path.stem)
 
+    def _where(self, filter: Dict[str, Any] | None) -> tuple[str, list[Any]]:
+        if not filter:
+            return "", []
+        clauses: list[str] = []
+        params: list[Any] = []
+        for key, expected in filter.items():
+            column = f"(data ->> %s)"
+            if isinstance(expected, dict):
+                for operator, right in expected.items():
+                    if operator not in _OPERATORS:
+                        raise ValueError(f"Unsupported query operator: {operator}")
+                    if operator == "$in":
+                        params.append(key)
+                        clauses.append(f"{column} = ANY(%s)")
+                        params.append([_to_text(item) for item in right])
+                    elif operator == "$ne" and right is None:
+                        params.append(key)
+                        clauses.append(f"{column} IS NOT NULL")
+                    else:
+                        params.append(key)
+                        clauses.append(f"{column} {_OPERATORS[operator]} %s")
+                        params.append(_to_text(right))
+            elif expected is None:
+                params.append(key)
+                clauses.append(f"{column} IS NULL")
+            else:
+                params.append(key)
+                clauses.append(f"{column} = %s")
+                params.append(_to_text(expected))
+        return " WHERE " + " AND ".join(clauses), params
+
     def load(self, path: Path) -> List[Dict[str, Any]]:
-        collection = self.db[self._collection_name(path)]
-        return [
-            {key: value for key, value in row.items() if key != "_id"}
-            for row in collection.find({})
-        ]
+        return self.query(path)
 
     def save(self, path: Path, rows: Iterable[Dict[str, Any]]) -> None:
         self.upsert(path, rows)
 
     def upsert(self, path: Path, rows: Iterable[Dict[str, Any]]) -> None:
-        collection = self.db[self._collection_name(path)]
+        table = self._table(path)
         payload = [_jsonify(row) for row in rows]
-        operations = [
-            UpdateOne(
-                {"id": row["id"]} if row.get("id") else {"_singleton": row["_singleton"]},
-                {"$set": row},
-                upsert=True,
-            )
-            for row in payload
-            if row.get("id") or row.get("_singleton")
-        ]
-        if operations:
-            collection.bulk_write(operations, ordered=False)
+        with self.conn.cursor() as cur:
+            for row in payload:
+                if row.get("id"):
+                    cur.execute(
+                        f'INSERT INTO "{table}" (id, data) VALUES (%s, %s) '
+                        f'ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data',
+                        (row["id"], Jsonb(row)),
+                    )
+                elif row.get("_singleton"):
+                    cur.execute(
+                        f'INSERT INTO "{table}" (id, _singleton, data) VALUES (%s, %s, %s) '
+                        f'ON CONFLICT (_singleton) DO UPDATE SET data = EXCLUDED.data',
+                        (row["_singleton"], row["_singleton"], Jsonb(row)),
+                    )
 
     def delete(self, path: Path, row_id: str) -> None:
-        self.db[self._collection_name(path)].delete_one({"id": row_id})
+        self.conn.execute(f'DELETE FROM "{self._table(path)}" WHERE id = %s', (row_id,))
 
     def clear(self, path: Path) -> None:
-        self.db[self._collection_name(path)].delete_many({})
+        self.conn.execute(f'TRUNCATE "{self._table(path)}"')
 
     def ensure_indexes(self) -> None:
-        self.db["users"].create_index([("id", ASCENDING)], unique=True)
-        self.db["users"].create_index([("email", ASCENDING)], unique=True)
-        self.db["users"].create_index([("username", ASCENDING)])
-        for collection_name in _FILE_TO_COLLECTION.values():
-            self.db[collection_name].create_index([("id", ASCENDING)], unique=True)
-        self.db["sessions"].create_index([("user_id", ASCENDING), ("start", ASCENDING)])
-        self.db["sessions"].create_index([("user_id", ASCENDING), ("end", ASCENDING)])
-        self.db["breaks"].create_index([("session_id", ASCENDING), ("start", ASCENDING)])
-        self.db["breaks"].create_index([("session_id", ASCENDING), ("end", ASCENDING)])
-        self.db["calendar_events"].create_index([("date", ASCENDING)], unique=True)
-        self.db["announcements"].create_index([("created_at", ASCENDING)])
-        self.db["company_work_policy"].create_index([("_singleton", ASCENDING)], unique=True)
-        self.db["announcement_reads"].create_index([("user_id", ASCENDING), ("announcement_id", ASCENDING)])
-        self.db["announcement_reads"].create_index(
-            [("announcement_id", ASCENDING), ("user_id", ASCENDING)],
-            unique=True,
-        )
-        self.db["company_events"].create_index([("event_date", ASCENDING)])
+        with self.conn.cursor() as cur:
+            for collection_name in {*_FILE_TO_COLLECTION.values(), "company_work_policy"}:
+                cur.execute(
+                    f'CREATE TABLE IF NOT EXISTS "{collection_name}" ('
+                    f'id TEXT PRIMARY KEY, _singleton TEXT UNIQUE, data JSONB NOT NULL)'
+                )
+            cur.execute('CREATE TABLE IF NOT EXISTS "_workhub_system" (id TEXT PRIMARY KEY, data JSONB NOT NULL)')
+
+            def index(table: str, name: str, expr: str, unique: bool = False) -> None:
+                cur.execute(
+                    f'CREATE {"UNIQUE " if unique else ""}INDEX IF NOT EXISTS "{name}" '
+                    f'ON "{table}" ({expr})'
+                )
+
+            index("users", "users_email_idx", "(data ->> 'email')", unique=True)
+            index("users", "users_username_idx", "(data ->> 'username')")
+            index("sessions", "sessions_user_start_idx", "(data ->> 'user_id'), (data ->> 'start')")
+            index("sessions", "sessions_user_end_idx", "(data ->> 'user_id'), (data ->> 'end')")
+            index("breaks", "breaks_session_start_idx", "(data ->> 'session_id'), (data ->> 'start')")
+            index("breaks", "breaks_session_end_idx", "(data ->> 'session_id'), (data ->> 'end')")
+            index("calendar_events", "calendar_events_date_idx", "(data ->> 'date')", unique=True)
+            index("announcements", "announcements_created_at_idx", "(data ->> 'created_at')")
+            index(
+                "announcement_reads",
+                "announcement_reads_user_ann_idx",
+                "(data ->> 'user_id'), (data ->> 'announcement_id')",
+            )
+            index(
+                "announcement_reads",
+                "announcement_reads_ann_user_idx",
+                "(data ->> 'announcement_id'), (data ->> 'user_id')",
+                unique=True,
+            )
+            index("company_events", "company_events_date_idx", "(data ->> 'event_date')")
 
     def health(self) -> Dict[str, Any]:
-        self.client.admin.command("ping")
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT current_database()")
+            database = cur.fetchone()["current_database"]
         return {
-            "backend": "mongo",
+            "backend": "postgres",
             "connected": True,
             "production_safe": True,
-            "database": self.db.name,
+            "database": database,
         }
 
     def claim_first_admin(self) -> bool:
-        try:
-            previous = self.db["_workhub_system"].find_one_and_update(
-                {"_id": "bootstrap_admin", "claimed": {"$ne": True}},
-                {"$set": {"claimed": True, "claimed_at": datetime.now(INDIA_TZ).isoformat()}},
-                upsert=True,
-                return_document=ReturnDocument.BEFORE,
+        with self.conn.cursor() as cur:
+            cur.execute(
+                'INSERT INTO "_workhub_system" (id, data) VALUES (%s, %s) '
+                'ON CONFLICT (id) DO NOTHING RETURNING id',
+                (
+                    "bootstrap_admin",
+                    Jsonb({"claimed": True, "claimed_at": datetime.now(INDIA_TZ).isoformat()}),
+                ),
             )
-            return previous is None or not previous.get("claimed", False)
-        except PyMongoError:
-            return False
+            return cur.fetchone() is not None
 
     def reset_first_admin_claim(self) -> None:
-        self.db["_workhub_system"].delete_one({"_id": "bootstrap_admin"})
+        self.conn.execute('DELETE FROM "_workhub_system" WHERE id = %s', ("bootstrap_admin",))
 
     def query(
         self,
@@ -283,24 +363,32 @@ class _MongoStorage(_BaseStorage):
         sort: List[tuple[str, int]] | None = None,
         limit: int | None = None,
     ) -> List[Dict[str, Any]]:
-        collection = self.db[self._collection_name(path)]
-        cursor = collection.find(filter or {}, {"_id": 0})
+        table = self._table(path)
+        where_sql, params = self._where(filter)
+        sql = f'SELECT data FROM "{table}"{where_sql}'
         if sort:
-            cursor = cursor.sort(sort)
+            order_parts = [
+                f"(data ->> '{_safe_key(key)}') {'DESC' if direction < 0 else 'ASC'}"
+                for key, direction in sort
+            ]
+            sql += " ORDER BY " + ", ".join(order_parts)
         if limit is not None:
-            cursor = cursor.limit(limit)
-        return [row for row in cursor]
+            sql += " LIMIT %s"
+            params = [*params, limit]
+        with self.conn.cursor() as cur:
+            cur.execute(sql, params)
+            return [row["data"] for row in cur.fetchall()]
 
 
 def _build_storage() -> _BaseStorage:
-    if not _FORCE_JSON:
+    if not _FORCE_JSON and _POSTGRES_URL:
         try:
-            storage = _MongoStorage()
+            storage = _PostgresStorage()
             storage.ensure_indexes()
             return storage
-        except PyMongoError as exc:
+        except psycopg.Error as exc:
             if _PRODUCTION:
-                raise RuntimeError("MongoDB is required when WORKHUB_ENV=production") from exc
+                raise RuntimeError("Postgres is required when WORKHUB_ENV=production") from exc
     if _PRODUCTION:
         raise RuntimeError("JSON storage is not allowed when WORKHUB_ENV=production")
     return _JsonStorage()
@@ -347,7 +435,7 @@ def clear_rows(path: Path) -> None:
 
 
 def storage_backend() -> str:
-    return "mongo" if isinstance(_STORAGE, _MongoStorage) else "json"
+    return "postgres" if isinstance(_STORAGE, _PostgresStorage) else "json"
 
 
 def storage_health() -> Dict[str, Any]:

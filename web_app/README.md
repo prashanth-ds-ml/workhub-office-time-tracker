@@ -41,5 +41,5 @@ normalized before save so common date-entry formats do not fail validation.
   while fresh data loads.
 - Hashed JS/CSS assets use one-year immutable browser caching.
 - API responses larger than 1 KB are gzip compressed.
-- MongoDB-backed server caches use a short consistency window to avoid
+- Postgres-backed server caches use a short consistency window to avoid
   repeating ten collection reads for rapid consecutive actions.

@@ -4,7 +4,7 @@ from PyInstaller.utils.hooks import collect_submodules
 hidden_imports = (
     ["app", "admin_panel", "storage"]
     + collect_submodules("uvicorn")
-    + collect_submodules("pymongo")
+    + collect_submodules("psycopg")
 )
 
 a = Analysis(

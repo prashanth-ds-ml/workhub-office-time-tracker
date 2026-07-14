@@ -7,50 +7,48 @@ Browser clients
         |
         | HTTPS + JWT
         v
-Render Web Service serving React + API
+Vercel: React static build + FastAPI serverless function (api/index.py)
         |
-        | TLS MongoDB connection
+        | TLS Postgres connection
         v
-MongoDB Atlas database: workhub
+Vercel Postgres (Neon) database: workhub
 ```
 
-- Live API: `https://workhub-api-u07x.onrender.com`
-- Health check: `https://workhub-api-u07x.onrender.com/health`
-- API documentation: `https://workhub-api-u07x.onrender.com/docs`
+- Live API base: `https://YOUR-PROJECT.vercel.app/api`
+- Health check: `https://YOUR-PROJECT.vercel.app/api/health`
+- API documentation: `https://YOUR-PROJECT.vercel.app/api/docs`
 - Source repository: `https://github.com/prashanth-ds-ml/workhub-office-time-tracker`
 - Legacy desktop release: `release\WorkHub-Installer.zip`
 - Server release: `release\WorkHub-Server.zip`
 
-MongoDB credentials and server secrets must remain in Render environment
-variables. Never distribute them with any client package.
+Postgres credentials and server secrets must remain in Vercel project
+environment variables. Never distribute them with any client package.
 
-## Render environment
+## Vercel environment
 
-The Render service requires:
+The Vercel project requires:
 
 | Variable | Purpose |
 |---|---|
 | `WORKHUB_ENV=production` | Enables production safeguards |
-| `MONGO_URI` | MongoDB Atlas connection string |
-| `MONGO_DB=workhub` | Database name |
+| `POSTGRES_URL` | Postgres connection string (auto-injected by the Vercel Postgres integration, or a Neon URL) |
 | `WORKHUB_JWT_SECRET` | Signs authentication tokens |
 | `WORKHUB_JWT_EXPIRE_HOURS=12` | Login-token lifetime |
 | `WORKHUB_BOOTSTRAP_SECRET` | Private key required for Admin registration |
 | `WORKHUB_ALLOW_SELF_REGISTRATION=true` | Allows User self-registration |
 | `WORKHUB_CORS_ORIGINS` | Optional comma-separated browser origins for custom web hosts |
-| `PYTHON_VERSION=3.10.11` | Compatible Render Python runtime |
 
-Do not expose `MONGO_URI`, `WORKHUB_JWT_SECRET`, or
+Do not expose `POSTGRES_URL`, `WORKHUB_JWT_SECRET`, or
 `WORKHUB_BOOTSTRAP_SECRET`.
 
 If WorkHub is served from a browser origin other than the default local Vite
 origins or the same hosted domain as FastAPI, set `WORKHUB_CORS_ORIGINS`
 explicitly. Credentialed requests no longer allow the `"null"` origin.
 
-## Free Render behavior
+## Serverless behavior
 
-The free Render service sleeps after approximately 15 minutes without inbound
-traffic. WorkHub handles this by:
+Vercel serverless functions spin up on demand and may go cold after a period
+of inactivity. WorkHub handles this by:
 
 - showing the login window immediately;
 - waking the server in a background thread;
@@ -58,33 +56,31 @@ traffic. WorkHub handles this by:
 - waiting up to 90 seconds for login or registration;
 - sending a health heartbeat every 10 minutes during office hours.
 
-The first request after idle time can therefore be slow. MongoDB data remains
-persistent in Atlas while Render sleeps.
+The first request after idle time can therefore be slow while the function
+cold-starts. Postgres data remains persistent regardless of function state.
+The React app itself is served as a static site from Vercel's CDN and has no
+cold start.
 
-## MongoDB initialization
+## Postgres initialization
 
-Local `.env` supports either:
-
-```text
-MONGO_URI=...
-```
-
-or:
+Local `.env` supports:
 
 ```text
-MONGODB_URI=...
+POSTGRES_URL=...
 ```
+
+(also checked: `POSTGRES_URL_NON_POOLING`, `DATABASE_URL`)
 
 Initialize a clean database:
 
 ```powershell
-.\.venv\Scripts\python.exe initialize_mongodb.py
+.\.venv\Scripts\python.exe initialize_postgres.py
 ```
 
-This creates all collections and indexes plus:
+This creates all tables and indexes plus:
 
-- seven attendance-policy documents;
-- one universal company work-policy document.
+- seven attendance-policy rows;
+- one universal company work-policy row.
 
 It does not create users, sessions, calendar events, or announcements.
 
@@ -114,7 +110,7 @@ Both roles use the same Sign In page after registration.
 4. Enter:
 
 ```text
-https://workhub-api-u07x.onrender.com
+https://YOUR-PROJECT.vercel.app/api
 ```
 
 5. Wait for dependencies to install.
@@ -159,7 +155,8 @@ git commit -m "Describe the update"
 git push
 ```
 
-Render automatically deploys the latest `main` commit.
+Vercel automatically deploys the latest `main` commit (or opens a preview
+deployment for other branches/PRs).
 
 Legacy desktop changes require:
 
@@ -176,37 +173,40 @@ Local syntax and integration:
 ```powershell
 .\.venv\Scripts\python.exe -m py_compile app.py storage.py desktop_app.py admin_panel.py
 .\.venv\Scripts\python.exe integration_smoke.py
-.\.venv\Scripts\python.exe mongo_integration_smoke.py
+.\.venv\Scripts\python.exe postgres_integration_smoke.py
 ```
 
 Live health:
 
 ```powershell
-Invoke-RestMethod https://workhub-api-u07x.onrender.com/health
+Invoke-RestMethod https://YOUR-PROJECT.vercel.app/api/health
 ```
 
 Expected storage values:
 
 ```text
 environment: production
-backend: mongo
+backend: postgres
 connected: true
 database: workhub
 ```
 
 ## Common troubleshooting
 
-### Render returns `Not Found`
+### Vercel returns `404 NOT_FOUND` for `/api/...`
 
-The base URL now has a status route. For definitive checks, use `/health`.
+Confirm `vercel.json`'s rewrite for `/api/(.*)` points at `/api/index.py` and
+that the Python function built successfully in the deployment logs.
 
-### Render build tries to compile Rust/Pydantic
+### Vercel build fails installing Python dependencies
 
-Confirm `.python-version` and `PYTHON_VERSION` are both `3.10.11`.
+Confirm `requirements.txt` versions are compatible with the Vercel Python
+runtime; check the build logs for the exact package that failed.
 
-### Render fails with missing bootstrap secret
+### Vercel fails with missing bootstrap secret
 
-Add `WORKHUB_BOOTSTRAP_SECRET` under Render Environment and redeploy.
+Add `WORKHUB_BOOTSTRAP_SECRET` under Vercel Project Settings → Environment
+Variables and redeploy.
 
 ### Login returns `401`
 
@@ -215,17 +215,18 @@ user has not registered yet.
 
 ### Registration says invalid Admin key
 
-The value must exactly match Render's `WORKHUB_BOOTSTRAP_SECRET`.
+The value must exactly match Vercel's `WORKHUB_BOOTSTRAP_SECRET`.
 
 ### Desktop double-click opens nothing
 
-Confirm `client_config.json` contains the Render URL. The application reads
-UTF-8 files with or without a BOM. Reinstall using the latest ZIP if required.
+Confirm `client_config.json` contains the Vercel URL (including the `/api`
+path). The application reads UTF-8 files with or without a BOM. Reinstall
+using the latest ZIP if required.
 
 ### Server is starting
 
-Wait up to 90 seconds or click `Wake / reconnect`. This is expected after a
-free Render instance sleeps.
+Wait up to 90 seconds or click `Wake / reconnect`. This is expected while a
+serverless function cold-starts after being idle.
 
 ### Desktop shortcut location
 
@@ -239,17 +240,18 @@ The Start menu shortcut is also installed.
 
 ## Security rules
 
-- Never distribute MongoDB credentials.
+- Never distribute Postgres credentials.
 - Never distribute the JWT secret.
 - Give the bootstrap key only to real administrators.
-- Employee browsers communicate only with the Render HTTPS API.
+- Employee browsers communicate only with the Vercel HTTPS deployment.
 - Passwords are stored as PBKDF2 hashes.
 - Production mode rejects JSON fallback.
 - Admin and User permissions are enforced by the backend, not only by the UI.
 
 ## Backup and reset
 
-Use MongoDB Atlas backup/export facilities before destructive changes.
+Use the Postgres provider's (Vercel Postgres/Neon) backup/branching/export
+facilities before destructive changes.
 
 `reset_workhub_data.py --confirm` removes operational data and resets the
 Admin-claim marker. It must only be run intentionally by an administrator.

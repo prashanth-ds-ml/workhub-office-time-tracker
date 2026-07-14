@@ -1,7 +1,7 @@
 """FastAPI backend for Office Time Tracker / WorkHub v1.1.
 
 The backend keeps the same calendar-driven attendance rules and summary APIs,
-but now persists to MongoDB by default with a JSON fallback for local dev.
+but now persists to Postgres by default with a JSON fallback for local dev.
 The Python desktop app uses this API for the office dashboard experience.
 """
 
@@ -1938,17 +1938,17 @@ def mark_announcement_read(
     return {"message": "Announcement marked read"}
 
 
+@app.get("/attendance/today")
+def get_attendance_today(current_user: User = Depends(get_current_user)) -> Dict[str, Any]:
+    return _attendance_summary_for_date(current_user, _ist_today())
+
+
 @app.get("/attendance/{target_date}")
 def get_attendance_for_date(
     target_date: str,
     current_user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
     return _attendance_summary_for_date(current_user, _parse_date(target_date))
-
-
-@app.get("/attendance/today")
-def get_attendance_today(current_user: User = Depends(get_current_user)) -> Dict[str, Any]:
-    return _attendance_summary_for_date(current_user, _ist_today())
 
 
 @app.get("/dashboard/overview")
