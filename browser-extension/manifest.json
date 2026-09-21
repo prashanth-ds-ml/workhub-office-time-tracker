@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "WorkHub Punch-In Reminder",
+  "version": "1.0.0",
+  "description": "Reminds you to punch in on WorkHub if you haven't started your workday by 11am.",
+  "permissions": ["storage", "notifications", "alarms"],
+  "host_permissions": ["https://workhub-office-time-tracker.vercel.app/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://workhub-office-time-tracker.vercel.app/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "128": "icons/icon128.png"
+  }
+}

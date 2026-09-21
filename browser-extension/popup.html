@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>WorkHub Reminder</title>
+  <style>
+    body { font-family: system-ui, sans-serif; width: 260px; padding: 14px; color: #1b1f27; }
+    h1 { font-size: 15px; margin: 0 0 8px; }
+    p { font-size: 13px; margin: 4px 0; color: #4a5262; }
+    .status { font-weight: 600; }
+    .ok { color: #1a7f4e; }
+    .warn { color: #b4530a; }
+    button {
+      margin-top: 12px; width: 100%; padding: 8px; border: none; border-radius: 6px;
+      background: #1b1f6a; color: white; font-size: 13px; cursor: pointer;
+    }
+    button:hover { background: #2a2f8a; }
+  </style>
+</head>
+<body>
+  <h1>WorkHub Punch-In Reminder</h1>
+  <p>Signed in as: <span id="email" class="status">checking...</span></p>
+  <p id="note"></p>
+  <button id="check-now">Check punch-in status now</button>
+  <script src="popup.js"></script>
+</body>
+</html>
