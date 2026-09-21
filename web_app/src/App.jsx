@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Activity, BarChart3, Bell, BriefcaseBusiness, CalendarCheck2, CalendarClock, CalendarDays, ChevronLeft,
+  Activity, BarChart3, Bell, BriefcaseBusiness, CalendarDays, ChevronLeft,
   ChevronRight, ChevronsLeft, ChevronsRight, CircleStop, Clock3, Coffee,
   Download, Eye, EyeOff, Gauge, LogOut, Menu, Megaphone, Play, Plus,
   RefreshCw, Settings2, ShieldCheck, Users, X
@@ -219,15 +219,14 @@ function Dashboard({ overview, serverOffsetMs = 0 }) {
       <Stat label="Break used" value={mins(t.breaks_used_minutes)} hint={`${mins(t.break_remaining_minutes)} available`} tone="amber" icon={Coffee} />
       <Stat label="Monthly progress" value={`${summary.completed || 0}/${summary.working_days || 0}`} hint="target days completed" tone="green" icon={CalendarDays} />
       <Stat label="Target today" value={`${policy.target_work_hours || 0}h`} hint={`${policy.max_break_minutes || 0}m break allowance`} tone="purple" icon={Gauge} />
-      <Stat label="Holidays completed" value={holidaySummary.completed || 0} hint={`of ${holidaySummary.total || 0} in ${holidaySummary.year || ""}`} tone="teal" icon={CalendarCheck2} />
-      <Stat label="Holidays left" value={holidaySummary.left || 0} hint={`of ${holidaySummary.total || 0} in ${holidaySummary.year || ""}`} tone="pink" icon={CalendarClock} />
     </div>
     <div className="two-col">
       <section className="panel">
         <div className="panel-head"><div><h3>Month at a glance</h3><p>{monthTitle(overview.month)}</p></div><span className="panel-badge">{summary.remaining_working_days || 0} workdays left</span></div>
         <div className="summary-list">{[
           ["Working days", summary.working_days], ["Completed", summary.completed], ["Workdays left", summary.remaining_working_days],
-          ["Days left in month", summary.days_left_in_month], ["Holidays", summary.holidays], ["Half days", summary.half_days], ["Long weekends", summary.long_weekends]
+          ["Days left in month", summary.days_left_in_month], ["Holidays", summary.holidays], ["Half days", summary.half_days], ["Long weekends", summary.long_weekends],
+          [`Holidays completed (${holidaySummary.year || ""})`, holidaySummary.completed], [`Holidays left (${holidaySummary.year || ""})`, holidaySummary.left]
         ].map(([a,b]) => <div key={a}><span>{a}</span><strong>{b || 0}</strong></div>)}</div>
       </section>
       <section className="panel">
