@@ -628,6 +628,17 @@ class Session(BaseModel):
     start: datetime
     end: Optional[datetime] = None
     breaks: List[Dict[str, Any]] = Field(default_factory=list)
+    work_location: str = "office"
+
+
+class StartSessionRequest(BaseModel):
+    work_location: str = "office"
+
+    @validator("work_location")
+    def _check_work_location(cls, value: str) -> str:
+        if value not in {"office", "home"}:
+            raise ValueError("work_location must be 'office' or 'home'")
+        return value
 
 
 class Break(BaseModel):
@@ -1761,12 +1772,16 @@ def list_sessions(
 
 
 @app.post("/sessions/{user_id}/start", response_model=Session)
-def start_session(user_id: str, current_user: User = Depends(get_current_user)) -> Session:
+def start_session(
+    user_id: str,
+    payload: Optional[StartSessionRequest] = None,
+    current_user: User = Depends(get_current_user),
+) -> Session:
     if current_user.id != user_id and current_user.role != "Admin":
         raise HTTPException(status_code=403, detail="No permission to start session for other users")
     if _active_session_for_user(user_id):
         raise HTTPException(status_code=400, detail="An active session already exists")
-    session = Session(user_id=user_id, start=_now())
+    session = Session(user_id=user_id, start=_now(), work_location=(payload or StartSessionRequest()).work_location)
     sessions_cache.append(session)
     _upsert_models(SESSIONS_FILE, [session])
     return session
