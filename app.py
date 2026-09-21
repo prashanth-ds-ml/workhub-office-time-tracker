@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional
 
 import jwt
 from dotenv import load_dotenv
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -342,7 +342,7 @@ def _hash_reset_token(token: str) -> str:
     return hmac.new(JWT_SECRET.encode("utf-8"), token.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
-def _send_password_reset_email(email: str, token: str) -> bool:
+def _send_email(to: str, subject: str, body: str) -> bool:
     smtp_host = os.getenv("WORKHUB_SMTP_HOST", "").strip()
     smtp_from = os.getenv("WORKHUB_SMTP_FROM", "").strip()
     if not smtp_host or not smtp_from:
@@ -355,20 +355,9 @@ def _send_password_reset_email(email: str, token: str) -> bool:
 
     message = EmailMessage()
     message["From"] = smtp_from
-    message["To"] = email
-    message["Subject"] = "WorkHub password reset code"
-    message.set_content(
-        "\n".join(
-            [
-                "Use this WorkHub reset code to set a new password:",
-                "",
-                token,
-                "",
-                f"This code expires in {PASSWORD_RESET_MINUTES} minutes.",
-                "If you did not request this, ignore this email.",
-            ]
-        )
-    )
+    message["To"] = to
+    message["Subject"] = subject
+    message.set_content(body)
 
     with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as smtp:
         if use_tls:
@@ -377,6 +366,20 @@ def _send_password_reset_email(email: str, token: str) -> bool:
             smtp.login(smtp_user, smtp_password)
         smtp.send_message(message)
     return True
+
+
+def _send_password_reset_email(email: str, token: str) -> bool:
+    body = "\n".join(
+        [
+            "Use this WorkHub reset code to set a new password:",
+            "",
+            token,
+            "",
+            f"This code expires in {PASSWORD_RESET_MINUTES} minutes.",
+            "If you did not request this, ignore this email.",
+        ]
+    )
+    return _send_email(email, "WorkHub password reset code", body)
 
 
 def _password_reset_self_service_available() -> bool:
@@ -2297,6 +2300,126 @@ def admin_update_user(
     if changed_breaks:
         _upsert_models(BREAKS_FILE, changed_breaks)
     return _user_summary(user)
+
+
+CRON_SECRET = os.getenv("CRON_SECRET", "")
+
+
+def _require_cron_secret(authorization: Optional[str] = Header(None)) -> None:
+    if not CRON_SECRET:
+        raise HTTPException(status_code=503, detail="Cron endpoints are not configured")
+    provided = (authorization or "").removeprefix("Bearer ").strip()
+    if not hmac.compare_digest(provided, CRON_SECRET):
+        raise HTTPException(status_code=401, detail="Invalid cron secret")
+
+
+@app.get("/cron/daily-digest")
+def cron_daily_digest(_: None = Depends(_require_cron_secret)) -> Dict[str, Any]:
+    today = _ist_today()
+    event = _calendar_event_for_date(today)
+    if not _event_requires_attendance(event["event_type"]):
+        return {"sent": False, "reason": "not a working day"}
+
+    late_names: List[str] = []
+    absent_names: List[str] = []
+    for user in users_cache:
+        if not user.is_active:
+            continue
+        summary = _attendance_summary_for_date(user, today)
+        session = summary["session"]
+        if session is None:
+            absent_names.append(f"{user.username} ({user.email})")
+        else:
+            start_ist = _ensure_ist(datetime.fromisoformat(session["start"]))
+            if start_ist.hour + start_ist.minute / 60 > 11:
+                late_names.append(f"{user.username} ({user.email}) — punched in at {session['start_time']}")
+
+    if not late_names and not absent_names:
+        return {"sent": False, "reason": "everyone on time"}
+
+    admin_emails = [user.email for user in users_cache if user.role == "Admin" and user.is_active]
+    if not admin_emails:
+        return {"sent": False, "reason": "no admin recipients"}
+
+    lines = [f"WorkHub attendance digest for {today.isoformat()}", ""]
+    if absent_names:
+        lines += ["Not punched in yet:", *[f"  - {name}" for name in absent_names], ""]
+    if late_names:
+        lines += ["Punched in after 11am:", *[f"  - {name}" for name in late_names], ""]
+    body = "\n".join(lines)
+
+    delivered = 0
+    for admin_email in admin_emails:
+        try:
+            if _send_email(admin_email, f"WorkHub attendance digest — {today.isoformat()}", body):
+                delivered += 1
+        except Exception:
+            continue
+    return {"sent": delivered > 0, "recipients": delivered, "late": len(late_names), "absent": len(absent_names)}
+
+
+@app.get("/cron/weekly-digest")
+def cron_weekly_digest(_: None = Depends(_require_cron_secret)) -> Dict[str, Any]:
+    today = _ist_today()
+    week_end = today
+    week_start = week_end - timedelta(days=7)
+    range_events = _calendar_events_in_range(week_start, week_end)
+    attendance_events = {
+        event["date"]: event for event in range_events if _event_requires_attendance(event["event_type"])
+    }
+    upcoming_holidays = [
+        event
+        for event in _calendar_events_in_range(today, today + timedelta(days=14))
+        if event["event_type"] == "HOLIDAY"
+    ]
+
+    range_start_dt = datetime.combine(week_start, datetime.min.time(), tzinfo=INDIA_TZ)
+    range_end_dt = datetime.combine(week_end, datetime.min.time(), tzinfo=INDIA_TZ)
+    sessions_in_range = [_normalize_session(Session(**row)) for row in _query_json(
+        SESSIONS_FILE,
+        {"start": {"$gte": range_start_dt, "$lt": range_end_dt}},
+        sort=[("start", 1)],
+    )]
+    session_breaks = _breaks_by_session_ids([session.id for session in sessions_in_range])
+    sessions_by_user: Dict[str, List[Session]] = defaultdict(list)
+    for session in sessions_in_range:
+        sessions_by_user[session.user_id].append(session)
+
+    delivered = 0
+    for user in users_cache:
+        if not user.is_active:
+            continue
+        work_by_day: Dict[str, float] = defaultdict(float)
+        for session in sessions_by_user.get(user.id, []):
+            day_key = _session_day(session).isoformat()
+            work_by_day[day_key] += _session_work_minutes(
+                session, session_breaks=session_breaks.get(session.id, [])
+            )
+        completed_days = 0
+        for day_key, event in attendance_events.items():
+            policy = _get_policy_for_event_type(event["event_type"])
+            if work_by_day.get(day_key, 0) >= policy.target_work_hours * 60:
+                completed_days += 1
+        total_hours = round(sum(work_by_day.values()) / 60, 1)
+
+        lines = [
+            f"Your WorkHub summary for {week_start.isoformat()} to {(week_end - timedelta(days=1)).isoformat()}",
+            "",
+            f"Days completed: {completed_days} of {len(attendance_events)} working days",
+            f"Total hours worked: {total_hours}h",
+        ]
+        if upcoming_holidays:
+            lines += ["", "Upcoming holidays in the next 2 weeks:"]
+            lines += [f"  - {event['title']} ({event['date']})" for event in upcoming_holidays]
+        body = "\n".join(lines)
+
+        try:
+            if _send_email(user.email, "Your WorkHub weekly summary", body):
+                delivered += 1
+        except Exception:
+            continue
+
+    return {"sent": delivered > 0, "recipients": delivered}
 
 
 @app.get("/{browser_path:path}", include_in_schema=False)
