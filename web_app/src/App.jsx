@@ -14,6 +14,7 @@ const eventColors = {
   WORKING_DAY: "blue", HALF_DAY: "amber", FULL_DAY_SATURDAY: "teal",
   HOLIDAY: "purple", COMP_OFF: "pink", LONG_WEEKEND: "red", COMPANY_EVENT: "cyan"
 };
+const attendanceColors = { on_time: "day-attendance-green", late: "day-attendance-orange", absent: "day-attendance-red" };
 const nav = [
   ["dashboard", "Overview", Gauge], ["calendar", "Calendar", CalendarDays],
   ["attendance", "Attendance", Clock3], ["announcements", "Announcements", Bell],
@@ -181,7 +182,8 @@ function Calendar({ events, month, setMonth, onAdd, admin }) {
       {Array.from({ length: start }).map((_, i) => <div className="day empty" key={`e${i}`} />)}
       {Array.from({ length: count }).map((_, i) => {
         const date = `${month}-${String(i + 1).padStart(2, "0")}`, event = map[date];
-        return <div className={`day ${date === today() ? "current" : ""}`} key={date}><b>{i + 1}</b>
+        const attendanceClass = attendanceColors[event?.attendance_status] || "";
+        return <div className={`day ${date === today() ? "current" : ""} ${attendanceClass}`} key={date}><b>{i + 1}</b>
           {event && <span className={`event ${eventColors[event.event_type] || "blue"}`} title={event.description}>{event.title}</span>}
         </div>;
       })}
@@ -542,7 +544,7 @@ export default function App() {
         {page==="policies"&&admin&&<section className="panel"><div className="panel-head"><div><h3>Company work policy</h3><p>Applied to every employee</p></div><button className="primary" onClick={()=>setModal("policy")}><Settings2/> Edit policy</button></div>{data.policy?<div className="policy-grid"><Stat label="Office hours" value={`${data.policy?.office_hours?.start||"—"} – ${data.policy?.office_hours?.end||"—"}`} hint="standard working window" icon={Clock3}/>{Object.entries(data.policy?.rules||{}).map(([k,v])=><Stat key={k} label={k.replaceAll("_"," ")} value={k.includes("hours")?`${v}h`:`${v}m`} hint="company-wide rule" tone="purple" icon={ShieldCheck}/>)}</div>:<InlineEmpty title="Policy is loading" detail="Company working hours and rules will appear here."/>}</section>}
         {page==="reports"&&admin&&<section className="panel"><div className="panel-head"><div><h3>Employee analytics · {monthTitle(month)}</h3><p>Work and break totals for the selected month</p></div><div className="actions"><span className="panel-badge">{data.analytics?.summary?.active_employees||0} active</span><button className="ghost" onClick={exportAnalytics} disabled={!data.analytics}><Download/> Export CSV</button></div></div>{data.analytics?<><div className="stats compact"><Stat label="Active employees" value={data.analytics?.summary?.active_employees||0} icon={Users}/><Stat label="Average work/day" value={mins(data.analytics?.summary?.average_work_minutes)} tone="green" icon={Clock3}/><Stat label="Average break/day" value={mins(data.analytics?.summary?.average_break_minutes)} tone="amber" icon={Coffee}/></div><div className="table-wrap"><table><thead><tr><th>Employee</th><th>Days</th><th>Avg work</th><th>Avg break</th><th>Total work</th><th>Completion</th></tr></thead><tbody>{data.analytics?.employees?.map(e=><tr key={e.user_id}><td><strong>{e.username}</strong><small>{e.role}</small></td><td>{e.days_worked}</td><td>{mins(e.average_work_minutes)}</td><td>{mins(e.average_break_minutes)}</td><td>{mins(e.total_work_minutes)}</td><td>{e.completion_rate}%</td></tr>)}</tbody></table></div></>:<InlineEmpty title="Reports are loading" detail="Monthly analytics will appear after the report data loads."/>}</section>}
       </div>
-      <div className="tracker-bar"><div><span className={`pulse ${active?"on":""}`}/><div><strong>{todayStatus}</strong><small>{todayDetail}</small></div></div><div className="actions">{!active?<button className="primary" onClick={()=>action("start")}><Play/> Start work</button>:onBreak?<><button className="primary" onClick={()=>action("resume")}><Play/> Resume work</button><button className="danger" onClick={()=>action("stop")}><CircleStop/> Stop work</button></>:<><button className="ghost" onClick={()=>action("break")}><Coffee/> Start break</button><button className="danger" onClick={()=>action("stop")}><CircleStop/> Stop work</button></>}</div></div>
+      <div className="tracker-bar"><div><span className={`pulse ${active?"on":""}`}/><div><strong>{todayStatus}</strong><small>{todayDetail}</small></div></div><div className="actions">{!active?<button className="primary" onClick={()=>action("start")}><Play/> Punch in</button>:onBreak?<><button className="primary" onClick={()=>action("resume")}><Play/> Resume work</button><button className="danger" onClick={()=>action("stop")}><CircleStop/> Stop work</button></>:<><button className="ghost" onClick={()=>action("break")}><Coffee/> Start break</button><button className="danger" onClick={()=>action("stop")}><CircleStop/> Stop work</button></>}</div></div>
     </main>
     {modal&&<Modal title={{event:"Add calendar event",announcement:"Post announcement",employee:"Add employee",policy:"Edit company policy"}[modal]} onClose={()=>setModal(null)}><FormsDialog api={api} config={publicConfig} eventColors={eventColors} normalizeIsoDate={normalizeIsoDate} onClose={()=>setModal(null)} onDone={handleModalDone} policy={data.policy} today={today} token={auth.token} type={modal} /></Modal>}
   </div>;

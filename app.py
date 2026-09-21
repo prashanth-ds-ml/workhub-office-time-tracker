@@ -1301,12 +1301,28 @@ def _dashboard_overview(user: User, month: str, announcement_limit: Optional[int
     sessions_for_month = _sessions_for_user(user.id, month)
     session_breaks = _breaks_by_session_ids([session.id for session in sessions_for_month])
     month_sessions_by_day: Dict[str, float] = defaultdict(float)
+    first_punch_by_day: Dict[str, datetime] = {}
     for session in sessions_for_month:
         day_key = _session_day(session).isoformat()
         month_sessions_by_day[day_key] = max(
             month_sessions_by_day[day_key],
             _session_work_minutes(session, session_breaks=session_breaks.get(session.id, [])),
         )
+        start_ist = _ensure_ist(session.start)
+        if day_key not in first_punch_by_day or start_ist < first_punch_by_day[day_key]:
+            first_punch_by_day[day_key] = start_ist
+
+    attendance_required_types = {"WORKING_DAY", "FULL_DAY_SATURDAY", "HALF_DAY"}
+    for event in month_events:
+        event_date = date.fromisoformat(event["date"])
+        first_punch = first_punch_by_day.get(event["date"])
+        if first_punch is not None:
+            punch_hour = first_punch.hour + first_punch.minute / 60
+            event["attendance_status"] = "on_time" if punch_hour <= 11 else "late"
+        elif event["event_type"] in attendance_required_types and event_date < today:
+            event["attendance_status"] = "absent"
+        else:
+            event["attendance_status"] = None
 
     working_days = [
         event for event in month_events if event["event_type"] in {"WORKING_DAY", "FULL_DAY_SATURDAY"}

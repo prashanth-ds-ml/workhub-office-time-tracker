@@ -724,6 +724,21 @@ aside nav button i {
   background: #fafbfc;
 }
 
+.day-attendance-green {
+  background: #e8f8ef;
+  box-shadow: inset 0 0 0 1px #b7ebc9;
+}
+
+.day-attendance-orange {
+  background: #fff3e6;
+  box-shadow: inset 0 0 0 1px #ffd9ad;
+}
+
+.day-attendance-red {
+  background: #fdecec;
+  box-shadow: inset 0 0 0 1px #f6b8b8;
+}
+
 .event {
   display: block;
   padding: 5px 6px;
