@@ -96,13 +96,18 @@ const POPUP_WIDTH = 320 + 52; // card width + horizontal padding
 const POPUP_HEIGHT = 320;
 
 async function showReminderPopup(title, message) {
+  // Center against the browser window the user is actually looking at,
+  // not the primary display — on multi-monitor setups those can differ,
+  // which is what pushed the popup to one side instead of true center.
   let left, top;
   try {
-    const displays = await chrome.system.display.getInfo();
-    const primary = displays.find((d) => d.isPrimary) || displays[0];
-    const area = primary.workArea;
-    left = Math.round(area.left + (area.width - POPUP_WIDTH) / 2);
-    top = Math.round(area.top + (area.height - POPUP_HEIGHT) / 2);
+    const win = await chrome.windows.getLastFocused({ windowTypes: ["normal"] });
+    const winLeft = win.left ?? 0;
+    const winTop = win.top ?? 0;
+    const winWidth = win.width ?? POPUP_WIDTH;
+    const winHeight = win.height ?? POPUP_HEIGHT;
+    left = Math.round(winLeft + (winWidth - POPUP_WIDTH) / 2);
+    top = Math.round(winTop + (winHeight - POPUP_HEIGHT) / 2);
   } catch (err) {
     left = undefined;
     top = undefined;
