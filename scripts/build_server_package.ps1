@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $ReleaseDir = Join-Path $ProjectRoot "release"
 $PackageDir = Join-Path $ReleaseDir "WorkHub-Server"
 $ZipPath = Join-Path $ReleaseDir "WorkHub-Server.zip"
@@ -14,17 +14,17 @@ $Files = @(
     "app.py",
     "storage.py",
     "requirements.txt",
-    "run_production_server.ps1",
-    "migrate_json_to_postgres.py",
-    "initialize_postgres.py",
-    "reset_workhub_data.py",
+    "scripts\run_production_server.ps1",
+    "scripts\migrate_json_to_postgres.py",
+    "scripts\initialize_postgres.py",
+    "scripts\reset_workhub_data.py",
     "Dockerfile",
     "docker-compose.yml",
     "vercel.json",
-    "VERCEL_DEPLOYMENT.md",
+    "docs\VERCEL_DEPLOYMENT.md",
     ".env.production.example",
     ".env.docker.example",
-    "DISTRIBUTION.md"
+    "docs\DISTRIBUTION.md"
 )
 foreach ($File in $Files) {
     Copy-Item -LiteralPath (Join-Path $ProjectRoot $File) -Destination $PackageDir

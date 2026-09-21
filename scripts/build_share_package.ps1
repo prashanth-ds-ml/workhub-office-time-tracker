@@ -1,11 +1,11 @@
 $ErrorActionPreference = "Stop"
 
-$ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $ReleaseDir = Join-Path $ProjectRoot "release"
 $PackageDir = Join-Path $ReleaseDir "WorkHub-Installer"
 $ZipPath = Join-Path $ReleaseDir "WorkHub-Installer.zip"
 
-& (Join-Path $ProjectRoot "build_release.ps1")
+& (Join-Path $PSScriptRoot "build_release.ps1")
 
 if (Test-Path $PackageDir) {
     Remove-Item -LiteralPath $PackageDir -Recurse -Force
@@ -13,9 +13,9 @@ if (Test-Path $PackageDir) {
 New-Item -ItemType Directory -Path $PackageDir -Force | Out-Null
 
 $Files = @(
-    "install_workhub.ps1",
-    "Install WorkHub.bat",
-    "DISTRIBUTION.md"
+    "scripts\install_workhub.ps1",
+    "scripts\Install WorkHub.bat",
+    "docs\DISTRIBUTION.md"
 )
 foreach ($File in $Files) {
     Copy-Item -LiteralPath (Join-Path $ProjectRoot $File) -Destination $PackageDir

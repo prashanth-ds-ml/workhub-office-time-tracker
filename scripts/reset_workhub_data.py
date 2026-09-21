@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR if (SCRIPT_DIR / "app.py").is_file() else SCRIPT_DIR.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
 import app
 from storage import clear_rows, reset_first_admin_claim, storage_backend

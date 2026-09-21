@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $ProjectRoot
 
 if (-not (Test-Path ".venv\Scripts\python.exe")) {
@@ -10,7 +10,7 @@ if (-not (Test-Path ".venv\Scripts\python.exe")) {
 & ".venv\Scripts\python.exe" -m pip install --upgrade pip
 & ".venv\Scripts\python.exe" -m pip install -r requirements.txt
 & ".venv\Scripts\python.exe" -m pip install "pyinstaller==6.14.1"
-& ".venv\Scripts\python.exe" integration_smoke.py
+& ".venv\Scripts\python.exe" tests\integration_smoke.py
 & ".venv\Scripts\python.exe" -m PyInstaller --noconfirm --clean WorkHub.spec
 
 $ReleaseDir = Join-Path $ProjectRoot "release"
@@ -22,7 +22,7 @@ if (Test-Path $PackageDir) {
 }
 New-Item -ItemType Directory -Path $PackageDir -Force | Out-Null
 Copy-Item -Path "dist\WorkHub\*" -Destination $PackageDir -Recurse -Force
-Copy-Item -LiteralPath "DISTRIBUTION.md" -Destination $PackageDir
+Copy-Item -LiteralPath "docs\DISTRIBUTION.md" -Destination $PackageDir
 
 if (Test-Path $ZipPath) {
     Remove-Item -LiteralPath $ZipPath -Force

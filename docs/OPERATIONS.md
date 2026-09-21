@@ -134,7 +134,7 @@ Client configuration is stored under:
 Run:
 
 ```powershell
-.\build_share_package.ps1
+.\scripts\build_share_package.ps1
 ```
 
 Output:
@@ -161,7 +161,7 @@ deployment for other branches/PRs).
 Legacy desktop changes require:
 
 ```powershell
-.\build_share_package.ps1
+.\scripts\build_share_package.ps1
 ```
 
 Then redistribute the new installer ZIP or replace the installed source files.
@@ -172,8 +172,8 @@ Local syntax and integration:
 
 ```powershell
 .\.venv\Scripts\python.exe -m py_compile app.py storage.py desktop_app.py admin_panel.py
-.\.venv\Scripts\python.exe integration_smoke.py
-.\.venv\Scripts\python.exe postgres_integration_smoke.py
+.\.venv\Scripts\python.exe tests\integration_smoke.py
+.\.venv\Scripts\python.exe tests\postgres_integration_smoke.py
 ```
 
 Live health:

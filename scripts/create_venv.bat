@@ -1,4 +1,5 @@
 @echo off
+pushd "%~dp0.."
 
 REM Create a Python 3.10.11 virtual environment
 python -m venv .venv
@@ -9,3 +10,4 @@ call .venv\Scripts\activate.bat
 pip install -r requirements.txt
 
 echo Virtual environment ready.
+popd

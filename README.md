@@ -10,6 +10,9 @@ as a legacy distribution option for installs that still need it.
 - Central API/backend: `app.py`
 - Production storage: Postgres (Vercel Postgres/Neon)
 - Legacy Windows UI: `desktop_app.py`
+- Project docs and runbooks: `docs/`
+- Build/deployment helpers: `scripts/`
+- Smoke checks: `tests/`
 
 ## Main Features
 
@@ -52,7 +55,7 @@ npm run build
 
 Vercel builds `web_app/dist` as a static site and deploys `api/index.py`
 (which mounts `app.py`'s FastAPI app under `/api`) as a serverless function,
-per `vercel.json`. See `VERCEL_DEPLOYMENT.md` for the full setup.
+per `vercel.json`. See `docs/VERCEL_DEPLOYMENT.md` for the full setup.
 
 ## Beta readiness
 
@@ -65,7 +68,7 @@ inputs are normalized before save in the admin calendar dialog.
 ## Legacy Windows package
 
 ```powershell
-.\build_share_package.ps1
+.\scripts\build_share_package.ps1
 ```
 
 The shareable package is created at:
@@ -77,8 +80,8 @@ release\WorkHub-Installer.zip
 This installer bundles Python and all application dependencies. Employee
 computers do not need Python, pip, or a separate dependency installation.
 
-See `DISTRIBUTION.md` for shared-company deployment requirements.
-See `OPERATIONS.md` for the complete live setup, maintenance, and
+See `docs/DISTRIBUTION.md` for shared-company deployment requirements.
+See `docs/OPERATIONS.md` for the complete live setup, maintenance, and
 troubleshooting guide.
 
 If you want to run the API separately for debugging:

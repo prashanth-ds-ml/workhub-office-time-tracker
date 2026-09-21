@@ -4,7 +4,11 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ProjectRoot = if (Test-Path -LiteralPath (Join-Path $PSScriptRoot "app.py")) {
+    $PSScriptRoot
+} else {
+    Resolve-Path (Join-Path $PSScriptRoot "..")
+}
 Set-Location $ProjectRoot
 
 if (-not $env:WORKHUB_ENV) { $env:WORKHUB_ENV = "production" }
