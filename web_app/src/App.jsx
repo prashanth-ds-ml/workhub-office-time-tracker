@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Activity, BarChart3, Bell, BriefcaseBusiness, CalendarDays, ChevronLeft,
+  Activity, BarChart3, Bell, BriefcaseBusiness, CalendarCheck2, CalendarClock, CalendarDays, ChevronLeft,
   ChevronRight, ChevronsLeft, ChevronsRight, CircleStop, Clock3, Coffee,
   Download, Eye, EyeOff, Gauge, LogOut, Menu, Megaphone, Play, Plus,
   RefreshCw, Settings2, ShieldCheck, Users, X
@@ -198,6 +198,7 @@ function Dashboard({ overview, serverOffsetMs = 0 }) {
   const t = overview.today || {}, summary = overview.month_summary || {}, policy = t.policy || {};
   const upcomingHolidays = overview.upcoming_holidays || [];
   const nextHoliday = upcomingHolidays[0];
+  const holidaySummary = overview.holiday_summary || {};
   return <>
     <div className="hero-row">
       <div className="hero-copy">
@@ -218,6 +219,8 @@ function Dashboard({ overview, serverOffsetMs = 0 }) {
       <Stat label="Break used" value={mins(t.breaks_used_minutes)} hint={`${mins(t.break_remaining_minutes)} available`} tone="amber" icon={Coffee} />
       <Stat label="Monthly progress" value={`${summary.completed || 0}/${summary.working_days || 0}`} hint="target days completed" tone="green" icon={CalendarDays} />
       <Stat label="Target today" value={`${policy.target_work_hours || 0}h`} hint={`${policy.max_break_minutes || 0}m break allowance`} tone="purple" icon={Gauge} />
+      <Stat label="Holidays completed" value={holidaySummary.completed || 0} hint={`of ${holidaySummary.total || 0} in ${holidaySummary.year || ""}`} tone="teal" icon={CalendarCheck2} />
+      <Stat label="Holidays left" value={holidaySummary.left || 0} hint={`of ${holidaySummary.total || 0} in ${holidaySummary.year || ""}`} tone="pink" icon={CalendarClock} />
     </div>
     <div className="two-col">
       <section className="panel">

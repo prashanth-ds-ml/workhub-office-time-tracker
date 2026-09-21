@@ -1367,6 +1367,22 @@ def _dashboard_overview(user: User, month: str, announcement_limit: Optional[int
         if event["event_type"] in {"HOLIDAY", "COMP_OFF", "LONG_WEEKEND", "HALF_DAY"}
     ][:6]
 
+    year_holiday_events = sorted(
+        (
+            event
+            for event in calendar_events_cache
+            if event.event_type == "HOLIDAY" and date.fromisoformat(event.date).year == today.year
+        ),
+        key=lambda item: item.date,
+    )
+    holidays_completed = sum(1 for event in year_holiday_events if date.fromisoformat(event.date) < today)
+    holiday_summary = {
+        "year": today.year,
+        "total": len(year_holiday_events),
+        "completed": holidays_completed,
+        "left": len(year_holiday_events) - holidays_completed,
+    }
+
     announcement_read_ids = _announcement_read_ids_for_user(user.id)
     sorted_announcements = _announcement_rows(limit=announcement_limit)
     unread_count = sum(1 for announcement in sorted_announcements if announcement.id not in announcement_read_ids)
@@ -1399,6 +1415,7 @@ def _dashboard_overview(user: User, month: str, announcement_limit: Optional[int
             "next_company_event": next_company_event.dict() if next_company_event else None,
         },
         "upcoming_holidays": upcoming_holidays,
+        "holiday_summary": holiday_summary,
         "announcements": [
             {**announcement.dict(), "is_read": announcement.id in announcement_read_ids}
             for announcement in sorted_announcements
