@@ -80,17 +80,42 @@ async function checkPunchInAndNotify(isFirstCheck, options = {}) {
     return;
   }
 
-  chrome.notifications.create(`workhub-punch-${Date.now()}`, {
-    type: "basic",
-    iconUrl: "icons/icon128.png",
-    title: "WorkHub: You haven't punched in",
-    message: isFirstCheck
+  await showReminderPopup(
+    "WorkHub: You haven't punched in",
+    isFirstCheck
       ? "It's 11am and you haven't started your workday yet. Don't forget to punch in!"
-      : "Still not punched in on WorkHub — punch in when you're ready.",
-    priority: 2,
-  });
+      : "Still not punched in on WorkHub — punch in when you're ready."
+  );
 
   if (isFirstCheck) {
     chrome.alarms.create(ALARM_FOLLOWUP, { when: Date.now() + FOLLOWUP_DELAY_MS });
   }
+}
+
+const POPUP_WIDTH = 320 + 52; // card width + horizontal padding
+const POPUP_HEIGHT = 320;
+
+async function showReminderPopup(title, message) {
+  let left, top;
+  try {
+    const displays = await chrome.system.display.getInfo();
+    const primary = displays.find((d) => d.isPrimary) || displays[0];
+    const area = primary.workArea;
+    left = Math.round(area.left + (area.width - POPUP_WIDTH) / 2);
+    top = Math.round(area.top + (area.height - POPUP_HEIGHT) / 2);
+  } catch (err) {
+    left = undefined;
+    top = undefined;
+  }
+
+  const url = `reminder.html?${new URLSearchParams({ title, message }).toString()}`;
+  chrome.windows.create({
+    url,
+    type: "popup",
+    width: POPUP_WIDTH,
+    height: POPUP_HEIGHT,
+    left,
+    top,
+    focused: true,
+  });
 }

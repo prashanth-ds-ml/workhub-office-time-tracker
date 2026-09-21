@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>WorkHub Reminder</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; height: 100%; display: flex; align-items: center; justify-content: center;
+      font-family: system-ui, sans-serif; background: #1b1f6a;
+    }
+    .card {
+      background: white; border-radius: 14px; padding: 28px 26px; width: 320px;
+      text-align: center; box-shadow: 0 20px 50px rgba(0,0,0,0.25);
+    }
+    .card img { width: 48px; height: 48px; border-radius: 10px; margin-bottom: 10px; }
+    h1 { font-size: 17px; margin: 0 0 8px; color: #1b1f27; }
+    p { font-size: 13px; color: #4a5262; line-height: 1.4; margin: 0 0 20px; }
+    .actions { display: flex; gap: 10px; }
+    button, a.button {
+      flex: 1; padding: 10px; border-radius: 8px; border: none; font-size: 13px;
+      cursor: pointer; text-decoration: none; display: inline-block;
+    }
+    .primary { background: #1b1f6a; color: white; }
+    .primary:hover { background: #2a2f8a; }
+    .secondary { background: #edf0f4; color: #1b1f27; }
+    .secondary:hover { background: #dfe3ea; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <img src="icons/icon128.png" alt="WorkHub" />
+    <h1 id="title">WorkHub Reminder</h1>
+    <p id="message"></p>
+    <div class="actions">
+      <button class="secondary" id="dismiss">Dismiss</button>
+      <a class="button primary" id="open-workhub" href="https://workhub-office-time-tracker.vercel.app" target="_blank" rel="noopener">Punch in</a>
+    </div>
+  </div>
+  <script src="reminder.js"></script>
+</body>
+</html>
