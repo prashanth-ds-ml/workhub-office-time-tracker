@@ -125,6 +125,7 @@ ANNOUNCEMENTS_FILE = DATA_DIR / "announcements.json"
 COMPANY_EVENTS_FILE = DATA_DIR / "company_events.json"
 ANNOUNCEMENT_READS_FILE = DATA_DIR / "announcement_reads.json"
 ALERT_ACK_FILE = DATA_DIR / "alert_acknowledgements.json"
+AUDIT_LOG_FILE = DATA_DIR / "audit_log.json"
 
 EVENT_TYPES = {
     "WORKING_DAY",
@@ -719,6 +720,27 @@ class AlertAcknowledgement(BaseModel):
     created_at: str = Field(default_factory=_iso_now)
     acknowledged: bool = False
     acknowledged_at: Optional[str] = None
+
+
+class AuditLogEntry(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    actor_id: str
+    actor_email: str
+    action: str
+    target: str
+    details: Optional[str] = None
+    created_at: str = Field(default_factory=_iso_now)
+
+
+def _log_audit(actor: User, action: str, target: str, details: Optional[str] = None) -> None:
+    entry = AuditLogEntry(
+        actor_id=actor.id,
+        actor_email=actor.email,
+        action=action,
+        target=target,
+        details=details,
+    )
+    _upsert_models(AUDIT_LOG_FILE, [entry])
 
 
 users_cache: List[User] = []
@@ -1870,6 +1892,13 @@ def create_or_update_calendar_event(
         )
         calendar_events_cache.append(event)
 
+    _log_audit(
+        current_user,
+        "calendar_event",
+        event.date,
+        f"{event.event_type}: {event.title}",
+    )
+
     holiday_master_entry = next((row for row in holiday_master_cache if row.get("date") == event.date), None)
     if event.event_type == "HOLIDAY":
         master_row = {
@@ -2018,24 +2047,36 @@ def admin_dashboard(current_user: User = Depends(is_admin)) -> Dict[str, Any]:
     return dashboard
 
 
-def _admin_analytics(selected_month: str) -> Dict[str, Any]:
-    month_events = _month_calendar(selected_month)
+def _calendar_events_in_range(range_start: date, range_end: date) -> List[Dict[str, Any]]:
+    """`range_end` is exclusive."""
+    rows: List[Dict[str, Any]] = []
+    current = range_start
+    while current < range_end:
+        rows.append(_calendar_event_for_date(current))
+        current += timedelta(days=1)
+    return rows
+
+
+def _admin_analytics(range_start: date, range_end: date, label: str) -> Dict[str, Any]:
+    """`range_end` is exclusive."""
+    range_events = _calendar_events_in_range(range_start, range_end)
     attendance_events = {
         event["date"]: event
-        for event in month_events
+        for event in range_events
         if _event_requires_attendance(event["event_type"])
     }
     employee_rows: List[Dict[str, Any]] = []
-    month_start, month_end = _month_bounds(selected_month)
-    sessions_in_month = [_normalize_session(Session(**row)) for row in _query_json(
+    range_start_dt = datetime.combine(range_start, datetime.min.time(), tzinfo=INDIA_TZ)
+    range_end_dt = datetime.combine(range_end, datetime.min.time(), tzinfo=INDIA_TZ)
+    sessions_in_range = [_normalize_session(Session(**row)) for row in _query_json(
         SESSIONS_FILE,
-        {"start": {"$gte": month_start, "$lt": month_end}},
+        {"start": {"$gte": range_start_dt, "$lt": range_end_dt}},
         sort=[("start", 1)],
     )]
     sessions_by_user: Dict[str, List[Session]] = defaultdict(list)
-    for session in sessions_in_month:
+    for session in sessions_in_range:
         sessions_by_user[session.user_id].append(session)
-    session_breaks = _breaks_by_session_ids([session.id for session in sessions_in_month])
+    session_breaks = _breaks_by_session_ids([session.id for session in sessions_in_range])
 
     for user in users_cache:
         work_by_day: Dict[str, float] = defaultdict(float)
@@ -2072,7 +2113,8 @@ def _admin_analytics(selected_month: str) -> Dict[str, Any]:
 
     active_employees = [row for row in employee_rows if row["days_worked"] > 0]
     return {
-        "month": selected_month,
+        "label": label,
+        "range": {"start": range_start.isoformat(), "end": (range_end - timedelta(days=1)).isoformat()},
         "working_days": len(attendance_events),
         "employees": employee_rows,
         "summary": {
@@ -2092,9 +2134,28 @@ def _admin_analytics(selected_month: str) -> Dict[str, Any]:
 @app.get("/admin/analytics")
 def admin_analytics(
     month: Optional[str] = None,
+    date_from: Optional[str] = Query(None, alias="from"),
+    date_to: Optional[str] = Query(None, alias="to"),
     current_user: User = Depends(is_admin),
 ) -> Dict[str, Any]:
-    return _admin_analytics(month or _current_month_label())
+    if date_from and date_to:
+        range_start = _parse_date(date_from)
+        range_end = _parse_date(date_to) + timedelta(days=1)
+        if range_end <= range_start:
+            raise HTTPException(status_code=400, detail="'to' date must be on or after 'from' date")
+        return _admin_analytics(range_start, range_end, f"{date_from} to {date_to}")
+
+    selected_month = month or _current_month_label()
+    range_start_dt, range_end_dt = _month_bounds(selected_month)
+    return _admin_analytics(range_start_dt.date(), range_end_dt.date(), selected_month)
+
+
+@app.get("/admin/audit-log")
+def admin_audit_log(
+    limit: int = Query(100, ge=1, le=500),
+    current_user: User = Depends(is_admin),
+) -> List[Dict[str, Any]]:
+    return _query_json(AUDIT_LOG_FILE, sort=[("created_at", -1)], limit=limit)
 
 
 @app.get("/web/bootstrap")
@@ -2211,9 +2272,14 @@ def admin_update_user(
     if user.id == current_user.id and updates.get("role") == "User":
         raise HTTPException(status_code=400, detail="You cannot remove your own admin role")
 
+    previous_role, previous_active = user.role, user.is_active
     for key, value in updates.items():
         setattr(user, key, value)
     _sync_cached_user(user)
+    if "role" in updates and updates["role"] != previous_role:
+        _log_audit(current_user, "role_change", user.email, f"{previous_role} -> {updates['role']}")
+    if "is_active" in updates and updates["is_active"] != previous_active:
+        _log_audit(current_user, "account_status", user.email, "activated" if updates["is_active"] else "deactivated")
     changed_sessions: List[Session] = []
     changed_breaks: List[Break] = []
     if user.is_active is False:

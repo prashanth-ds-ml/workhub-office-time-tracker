@@ -509,6 +509,30 @@ aside nav button i {
   margin: 0 0 4px;
 }
 
+.report-range {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 14px 21px;
+  border-bottom: 1px solid var(--border);
+}
+
+.report-range label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: #64748b;
+}
+
+.report-range input[type="date"] {
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 13px;
+}
+
 .actions,
 .modal-actions {
   display: flex;

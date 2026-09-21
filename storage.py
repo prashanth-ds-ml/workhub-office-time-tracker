@@ -38,6 +38,7 @@ _FILE_TO_COLLECTION = {
     "company_events.json": "company_events",
     "announcement_reads.json": "announcement_reads",
     "alert_acknowledgements.json": "alert_acknowledgements",
+    "audit_log.json": "audit_log",
 }
 
 
@@ -366,6 +367,7 @@ class _PostgresStorage(_BaseStorage):
                 unique=True,
             )
             index("company_events", "company_events_date_idx", "(data ->> 'event_date')")
+            index("audit_log", "audit_log_created_at_idx", "(data ->> 'created_at')")
 
     @_resilient
     def health(self) -> Dict[str, Any]:
