@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import json
 import os
 from collections.abc import Iterable
@@ -225,10 +226,42 @@ _OPERATORS = {
 }
 
 
+def _resilient(method):
+    """Reconnect and retry once if Neon has dropped the idle connection.
+
+    Neon closes idle connections after a few minutes, which the psycopg
+    connection cached on this process only discovers when the next query
+    fails. Retrying once after a fresh connect covers that case without
+    paying for a health check on every request.
+    """
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return method(self, *args, **kwargs)
+        except psycopg.OperationalError:
+            self._reconnect()
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
 class _PostgresStorage(_BaseStorage):
     def __init__(self) -> None:
-        self.conn = psycopg.connect(_POSTGRES_URL, autocommit=True, row_factory=dict_row)
-        self.conn.execute("SELECT 1")
+        self.conn = self._connect()
+
+    @staticmethod
+    def _connect() -> psycopg.Connection:
+        conn = psycopg.connect(_POSTGRES_URL, autocommit=True, row_factory=dict_row)
+        conn.execute("SELECT 1")
+        return conn
+
+    def _reconnect(self) -> None:
+        try:
+            self.conn.close()
+        except Exception:
+            pass
+        self.conn = self._connect()
 
     def _table(self, path: Path) -> str:
         return _FILE_TO_COLLECTION.get(path.name, path.stem)
@@ -270,6 +303,7 @@ class _PostgresStorage(_BaseStorage):
     def save(self, path: Path, rows: Iterable[Dict[str, Any]]) -> None:
         self.upsert(path, rows)
 
+    @_resilient
     def upsert(self, path: Path, rows: Iterable[Dict[str, Any]]) -> None:
         table = self._table(path)
         payload = [_jsonify(row) for row in rows]
@@ -288,12 +322,15 @@ class _PostgresStorage(_BaseStorage):
                         (row["_singleton"], row["_singleton"], Jsonb(row)),
                     )
 
+    @_resilient
     def delete(self, path: Path, row_id: str) -> None:
         self.conn.execute(f'DELETE FROM "{self._table(path)}" WHERE id = %s', (row_id,))
 
+    @_resilient
     def clear(self, path: Path) -> None:
         self.conn.execute(f'TRUNCATE "{self._table(path)}"')
 
+    @_resilient
     def ensure_indexes(self) -> None:
         with self.conn.cursor() as cur:
             for collection_name in {*_FILE_TO_COLLECTION.values(), "company_work_policy"}:
@@ -330,6 +367,7 @@ class _PostgresStorage(_BaseStorage):
             )
             index("company_events", "company_events_date_idx", "(data ->> 'event_date')")
 
+    @_resilient
     def health(self) -> Dict[str, Any]:
         with self.conn.cursor() as cur:
             cur.execute("SELECT current_database()")
@@ -341,6 +379,7 @@ class _PostgresStorage(_BaseStorage):
             "database": database,
         }
 
+    @_resilient
     def claim_first_admin(self) -> bool:
         with self.conn.cursor() as cur:
             cur.execute(
@@ -353,9 +392,11 @@ class _PostgresStorage(_BaseStorage):
             )
             return cur.fetchone() is not None
 
+    @_resilient
     def reset_first_admin_claim(self) -> None:
         self.conn.execute('DELETE FROM "_workhub_system" WHERE id = %s', ("bootstrap_admin",))
 
+    @_resilient
     def query(
         self,
         path: Path,
