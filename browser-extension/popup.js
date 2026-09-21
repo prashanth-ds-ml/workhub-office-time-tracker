@@ -18,4 +18,9 @@ document.getElementById("check-now").addEventListener("click", () => {
   window.close();
 });
 
+document.getElementById("preview").addEventListener("click", () => {
+  chrome.runtime.sendMessage({ type: "WORKHUB_PREVIEW_POPUP" });
+  window.close();
+});
+
 render();

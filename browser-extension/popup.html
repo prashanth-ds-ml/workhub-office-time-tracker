@@ -11,10 +11,12 @@
     .ok { color: #1a7f4e; }
     .warn { color: #b4530a; }
     button {
-      margin-top: 12px; width: 100%; padding: 8px; border: none; border-radius: 6px;
+      margin-top: 10px; width: 100%; padding: 8px; border: none; border-radius: 6px;
       background: #1b1f6a; color: white; font-size: 13px; cursor: pointer;
     }
     button:hover { background: #2a2f8a; }
+    button.secondary { background: #edf0f4; color: #1b1f27; }
+    button.secondary:hover { background: #dfe3ea; }
   </style>
 </head>
 <body>
@@ -22,6 +24,7 @@
   <p>Signed in as: <span id="email" class="status">checking...</span></p>
   <p id="note"></p>
   <button id="check-now">Check punch-in status now</button>
+  <button id="preview" class="secondary">Preview reminder popup</button>
   <script src="popup.js"></script>
 </body>
 </html>

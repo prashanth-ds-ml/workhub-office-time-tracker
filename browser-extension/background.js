@@ -24,6 +24,11 @@ chrome.runtime.onMessage.addListener((message) => {
     chrome.storage.local.set({ workhub_token: message.token, workhub_email: message.email });
   } else if (message?.type === "WORKHUB_MANUAL_CHECK") {
     checkPunchInAndNotify(true, { forceNotifyIfPunched: true });
+  } else if (message?.type === "WORKHUB_PREVIEW_POPUP") {
+    showReminderPopup(
+      "WorkHub: You haven't punched in",
+      "This is a preview — it's 11am and you haven't started your workday yet. Don't forget to punch in!"
+    );
   }
 });
 
