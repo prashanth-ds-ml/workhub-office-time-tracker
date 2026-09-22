@@ -56,6 +56,8 @@ test("submits employee creation payload and closes on success", async () => {
   await user.type(screen.getByLabelText("Temporary password"), "secret123");
   await user.selectOptions(screen.getByLabelText("Role"), "Manager");
   await user.type(screen.getByLabelText("Manager bootstrap key"), "manager-key");
+  await user.type(screen.getByLabelText("Security question"), "First pet's name?");
+  await user.type(screen.getByLabelText("Security answer"), "Rex");
   await user.click(screen.getByRole("button", { name: "Save changes" }));
 
   expect(api).toHaveBeenCalledWith("/admin/users", {
@@ -67,6 +69,8 @@ test("submits employee creation payload and closes on success", async () => {
       password: "secret123",
       role: "Manager",
       bootstrap_secret: "manager-key",
+      security_question: "First pet's name?",
+      security_answer: "Rex",
     },
   });
   expect(onDone).toHaveBeenCalled();

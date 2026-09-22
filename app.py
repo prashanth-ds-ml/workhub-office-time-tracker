@@ -37,6 +37,7 @@ from email.message import EmailMessage
 
 from storage import (
     claim_first_admin,
+    clear_rows,
     delete_row,
     find_one_row,
     load_rows,
@@ -154,7 +155,7 @@ EVENT_TYPES = {
     "LONG_WEEKEND",
     "COMPANY_EVENT",
 }
-USER_PRIVATE_FIELDS = {"password", "password_reset_hash", "password_reset_expires_at"}
+USER_PRIVATE_FIELDS = {"password", "password_reset_hash", "password_reset_expires_at", "security_answer_hash"}
 
 DEFAULT_POLICIES: List[Dict[str, Any]] = [
     {
@@ -354,6 +355,18 @@ def _verify_password(password: str, encoded: str) -> bool:
         return hmac.compare_digest(actual, expected)
     except (ValueError, TypeError):
         return False
+
+
+def _normalize_security_answer(answer: str) -> str:
+    return answer.strip().lower()
+
+
+def _hash_security_answer(answer: str) -> str:
+    return _hash_password(_normalize_security_answer(answer))
+
+
+def _verify_security_answer(answer: str, encoded: str) -> bool:
+    return _verify_password(_normalize_security_answer(answer), encoded)
 
 
 def _hash_reset_token(token: str) -> str:
@@ -561,6 +574,8 @@ class User(BaseModel):
     rules: Optional[Dict[str, float]] = None
     password_reset_hash: Optional[str] = None
     password_reset_expires_at: Optional[str] = None
+    security_question: Optional[str] = None
+    security_answer_hash: Optional[str] = None
 
     @validator("role", pre=True)
     def _migrate_legacy_role(cls, value: str) -> str:
@@ -604,11 +619,19 @@ class RegistrationRequest(BaseModel):
     password: str
     role: str = "User"
     bootstrap_secret: Optional[str] = None
+    security_question: str
+    security_answer: str
 
     @validator("role")
     def _check_registration_role(cls, value: str) -> str:
         if value not in VALID_ROLES:
             raise ValueError(f"role must be one of {sorted(VALID_ROLES)}")
+        return value
+
+    @validator("security_question", "security_answer")
+    def _check_security_fields(cls, value: str) -> str:
+        if not value or not value.strip():
+            raise ValueError("Security question and answer are required")
         return value
 
 
@@ -622,17 +645,31 @@ class ResetPasswordRequest(BaseModel):
     new_password: str
 
 
+class ResetPasswordWithAnswerRequest(BaseModel):
+    email: str
+    security_answer: str
+    new_password: str
+
+
 class AdminUserCreate(BaseModel):
     username: str
     email: str
     password: str
     role: str = "User"
     bootstrap_secret: Optional[str] = None
+    security_question: str
+    security_answer: str
 
     @validator("role")
     def _check_role(cls, value: str) -> str:
         if value not in VALID_ROLES:
             raise ValueError(f"role must be one of {sorted(VALID_ROLES)}")
+        return value
+
+    @validator("security_question", "security_answer")
+    def _check_security_fields(cls, value: str) -> str:
+        if not value or not value.strip():
+            raise ValueError("Security question and answer are required")
         return value
 
 
@@ -1647,6 +1684,8 @@ def register(payload: RegistrationRequest, response: Response) -> Dict[str, Any]
         is_active=True,
         office_hours=company_policy["office_hours"].copy(),
         rules=company_policy["rules"].copy(),
+        security_question=payload.security_question.strip(),
+        security_answer_hash=_hash_security_answer(payload.security_answer),
     )
     users_cache.append(user)
     _upsert_models(USERS_FILE, [user])
@@ -1718,6 +1757,45 @@ def reset_password(payload: ResetPasswordRequest) -> Dict[str, str]:
         raise HTTPException(status_code=400, detail="Invalid or expired reset code")
     if not hmac.compare_digest(user.password_reset_hash, _hash_reset_token(token)):
         raise HTTPException(status_code=400, detail="Invalid or expired reset code")
+
+    user.password = _hash_password(payload.new_password)
+    user.password_reset_hash = None
+    user.password_reset_expires_at = None
+    _sync_cached_user(user)
+    _upsert_models(USERS_FILE, [user])
+    return {"message": "Password updated. Sign in with your new password."}
+
+
+@app.get("/auth/security-question")
+def get_security_question(email: str) -> Dict[str, Any]:
+    try:
+        normalized_email = _normalize_company_email(email)
+    except HTTPException:
+        raise HTTPException(status_code=404, detail="No security question found for this account")
+    row = _user_row_by_email(normalized_email)
+    user = User(**row) if row else None
+    if not user or not user.is_active or not user.security_question or not user.security_answer_hash:
+        raise HTTPException(
+            status_code=404,
+            detail="No security question set for this account. Contact an administrator to reset your password.",
+        )
+    return {"question": user.security_question}
+
+
+@app.post("/auth/reset-password-with-answer")
+def reset_password_with_answer(payload: ResetPasswordWithAnswerRequest) -> Dict[str, str]:
+    email = _normalize_company_email(payload.email)
+    if len(payload.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    row = _user_row_by_email(email)
+    user = User(**row) if row else None
+    if not user or not user.is_active or not user.security_question or not user.security_answer_hash:
+        raise HTTPException(
+            status_code=404,
+            detail="No security question set for this account. Contact an administrator to reset your password.",
+        )
+    if not _verify_security_answer(payload.security_answer, user.security_answer_hash):
+        raise HTTPException(status_code=403, detail="Incorrect answer")
 
     user.password = _hash_password(payload.new_password)
     user.password_reset_hash = None
@@ -2316,6 +2394,8 @@ def admin_create_user(
         is_active=True,
         office_hours=company_policy["office_hours"].copy(),
         rules=company_policy["rules"].copy(),
+        security_question=payload.security_question.strip(),
+        security_answer_hash=_hash_security_answer(payload.security_answer),
     )
     users_cache.append(user)
     _upsert_models(USERS_FILE, [user])
@@ -2374,6 +2454,27 @@ def admin_update_user(
     if changed_breaks:
         _upsert_models(BREAKS_FILE, changed_breaks)
     return _user_summary(user)
+
+
+@app.post("/admin/danger/wipe-all-accounts")
+def wipe_all_accounts(current_user: User = Depends(is_manager)) -> Dict[str, Any]:
+    # One-time cleanup for the initial rollout. Remove this endpoint once used -
+    # it deletes every account (including the caller's) and cannot be undone.
+    counts = {
+        "users": len(users_cache),
+        "sessions": len(sessions_cache),
+        "breaks": len(breaks_cache),
+        "announcement_reads": len(announcement_reads_cache),
+        "alert_acknowledgements": len(alert_ack_cache),
+    }
+    clear_rows(USERS_FILE)
+    clear_rows(SESSIONS_FILE)
+    clear_rows(BREAKS_FILE)
+    clear_rows(ANNOUNCEMENT_READS_FILE)
+    clear_rows(ALERT_ACK_FILE)
+    _refresh_cache(force=True)
+    logger.warning("Wiped all accounts via /admin/danger/wipe-all-accounts, deleted: %s", counts)
+    return {"message": "All accounts deleted.", "deleted": counts}
 
 
 CRON_SECRET = os.getenv("CRON_SECRET", "")

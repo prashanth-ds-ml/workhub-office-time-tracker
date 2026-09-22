@@ -328,6 +328,8 @@ class LoginDialog(tk.Toplevel):
         self.register_confirm_var = tk.StringVar()
         self.register_setup_var = tk.StringVar()
         self.register_role_var = tk.StringVar(value="User")
+        self.register_security_question_var = tk.StringVar()
+        self.register_security_answer_var = tk.StringVar()
 
         ttk.Label(register, text="Choose account type", font=("Segoe UI", 10, "bold")).grid(
             row=0, column=0, sticky="w"
@@ -361,6 +363,8 @@ class LoginDialog(tk.Toplevel):
             ("Email", self.register_email_var, False),
             ("Password", self.register_password_var, True),
             ("Confirm password", self.register_confirm_var, True),
+            ("Security question", self.register_security_question_var, False),
+            ("Security answer", self.register_security_answer_var, False),
         ]
         for row, (label, variable, hidden) in enumerate(register_fields, start=1):
             ttk.Label(register, text=label).grid(row=row * 2, column=0, sticky="w")
@@ -371,7 +375,7 @@ class LoginDialog(tk.Toplevel):
         self.setup_label = ttk.Label(register, text="Admin bootstrap key")
         self.setup_entry = ttk.Entry(register, textvariable=self.register_setup_var, width=36, show="*")
         ttk.Button(register, text="Create account", style="Primary.TButton", command=self.submit_registration).grid(
-            row=14, column=0, sticky="ew", pady=(4, 0)
+            row=18, column=0, sticky="ew", pady=(4, 0)
         )
         self.registration_note = ttk.Label(
             register,
@@ -380,7 +384,7 @@ class LoginDialog(tk.Toplevel):
             wraplength=300,
             justify="left",
         )
-        self.registration_note.grid(row=15, column=0, sticky="w", pady=(10, 0))
+        self.registration_note.grid(row=19, column=0, sticky="w", pady=(10, 0))
 
         self.bind("<Return>", lambda _event: self.submit_login() if tabs.index(tabs.select()) == 0 else self.submit_registration())
         self.protocol("WM_DELETE_WINDOW", self.cancel)
@@ -406,8 +410,8 @@ class LoginDialog(tk.Toplevel):
 
     def _toggle_admin_setup(self) -> None:
         if self.register_role_var.get() in ("Manager", "Boss"):
-            self.setup_label.grid(row=12, column=0, sticky="w")
-            self.setup_entry.grid(row=13, column=0, sticky="ew", pady=(3, 10))
+            self.setup_label.grid(row=16, column=0, sticky="w")
+            self.setup_entry.grid(row=17, column=0, sticky="ew", pady=(3, 10))
             self.registration_note.configure(text="Admin registration requires the private bootstrap key.")
         else:
             self.setup_label.grid_remove()
@@ -457,6 +461,11 @@ class LoginDialog(tk.Toplevel):
         if password != confirm:
             messagebox.showerror("Create account", "Passwords do not match.", parent=self)
             return
+        security_question = self.register_security_question_var.get().strip()
+        security_answer = self.register_security_answer_var.get().strip()
+        if not security_question or not security_answer:
+            messagebox.showerror("Create account", "A security question and answer are required.", parent=self)
+            return
         role = self.register_role_var.get()
         setup_code = self.register_setup_var.get().strip()
         if role in ("Manager", "Boss") and not setup_code:
@@ -470,6 +479,8 @@ class LoginDialog(tk.Toplevel):
                 "password": password,
                 "role": role,
                 "bootstrap_secret": setup_code or None,
+                "security_question": security_question,
+                "security_answer": security_answer,
             },
         }
         self.destroy()

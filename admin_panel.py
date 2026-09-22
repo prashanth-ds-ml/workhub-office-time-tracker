@@ -236,6 +236,8 @@ class EmployeeDialog(tk.Toplevel):
         self.email_var = tk.StringVar(value=employee.get("email", ""))
         self.password_var = tk.StringVar()
         self.role_var = tk.StringVar(value=employee.get("role", "User"))
+        self.security_question_var = tk.StringVar(value=employee.get("security_question", ""))
+        self.security_answer_var = tk.StringVar()
         fields = [
             ("Name", ttk.Entry(frame, textvariable=self.name_var, width=34)),
             ("Email", ttk.Entry(frame, textvariable=self.email_var, width=34)),
@@ -248,16 +250,20 @@ class EmployeeDialog(tk.Toplevel):
                 ttk.Combobox(frame, textvariable=self.role_var, values=["User", "Manager", "Boss"], state="readonly", width=32),
             ),
         ]
+        if not self.employee:
+            fields.append(("Security question", ttk.Entry(frame, textvariable=self.security_question_var, width=34)))
+            fields.append(("Security answer", ttk.Entry(frame, textvariable=self.security_answer_var, width=34)))
         for row, (label, widget) in enumerate(fields, start=2):
             ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", pady=7)
             widget.grid(row=row, column=1, sticky="ew", padx=(18, 0), pady=7)
+        note_row = 2 + len(fields)
         if self.employee:
             ttk.Label(frame, text="Leave password blank to keep it unchanged.", foreground=MUTED).grid(
-                row=6, column=0, columnspan=2, sticky="w", pady=(2, 0)
+                row=note_row, column=0, columnspan=2, sticky="w", pady=(2, 0)
             )
 
         buttons = ttk.Frame(frame)
-        buttons.grid(row=7, column=0, columnspan=2, sticky="e", pady=(18, 0))
+        buttons.grid(row=note_row + 1, column=0, columnspan=2, sticky="e", pady=(18, 0))
         ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side="left", padx=(0, 8))
         ttk.Button(
             buttons,
@@ -276,6 +282,11 @@ class EmployeeDialog(tk.Toplevel):
         if "@" not in email:
             messagebox.showerror("Employee", "Enter a valid email address.", parent=self)
             return
+        security_question = self.security_question_var.get().strip()
+        security_answer = self.security_answer_var.get().strip()
+        if not self.employee and (not security_question or not security_answer):
+            messagebox.showerror("Employee", "A security question and answer are required.", parent=self)
+            return
         self.result = {
             "username": name,
             "email": email,
@@ -283,6 +294,9 @@ class EmployeeDialog(tk.Toplevel):
         }
         if password:
             self.result["password"] = password
+        if not self.employee:
+            self.result["security_question"] = security_question
+            self.result["security_answer"] = security_answer
         self.destroy()
 
 
