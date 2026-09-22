@@ -19,7 +19,7 @@ export default function Auth({ api, companyEmail, config, onAuth }) {
 
   useEffect(() => {
     if (!allowSelfRegistration && mode === "register" && form.role === "User") {
-      setForm(current => ({ ...current, role: "Admin" }));
+      setForm(current => ({ ...current, role: "Manager" }));
     }
   }, [allowSelfRegistration, form.role, mode]);
 
@@ -78,8 +78,8 @@ export default function Auth({ api, companyEmail, config, onAuth }) {
         {mode === "reset" && <label>Reset code<input required inputMode="numeric" value={form.reset_token} onChange={e => setForm({ ...form, reset_token: e.target.value })} placeholder="6-digit code" /></label>}
         {mode === "reset" && <label>New password<span className="password-field"><input required type={showNewPassword ? "text" : "password"} minLength="6" value={form.new_password} onChange={e => setForm({ ...form, new_password: e.target.value })} placeholder="........" /><button type="button" className="password-toggle" onClick={() => setShowNewPassword(!showNewPassword)} title={showNewPassword ? "Hide password" : "Show password"}>{showNewPassword ? <EyeOff /> : <Eye />}</button></span></label>}
         {(mode === "login" || mode === "register") && <label>Password<span className="password-field"><input required type={showPassword ? "text" : "password"} minLength="6" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} placeholder="........" /><button type="button" className="password-toggle" onClick={() => setShowPassword(!showPassword)} title={showPassword ? "Hide password" : "Show password"}>{showPassword ? <EyeOff /> : <Eye />}</button></span></label>}
-        {mode === "register" && <><label>Account type<select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })}><option value="Admin">Administrator</option>{allowSelfRegistration && <option value="User">Employee</option>}</select></label>
-        {form.role === "Admin" && <label>Admin bootstrap key<input required value={form.bootstrap_secret} onChange={e => setForm({ ...form, bootstrap_secret: e.target.value })} /></label>}</>}
+        {mode === "register" && <><label>Account type<select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })}><option value="Manager">Manager</option><option value="Boss">Boss</option>{allowSelfRegistration && <option value="User">Employee</option>}</select></label>
+        {(form.role === "Manager" || form.role === "Boss") && <label>Admin bootstrap key<input required value={form.bootstrap_secret} onChange={e => setForm({ ...form, bootstrap_secret: e.target.value })} /></label>}</>}
         {error && <div className="error">{error}</div>}
         {notice && <div className="notice">{notice}</div>}
         <button className="primary wide" disabled={busy}>{busy ? "Connecting..." : mode === "login" ? "Sign in" : mode === "register" ? "Create account" : mode === "forgot" ? "Send reset code" : "Update password"}</button>

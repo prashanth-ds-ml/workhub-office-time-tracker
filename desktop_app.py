@@ -343,9 +343,16 @@ class LoginDialog(tk.Toplevel):
         ).pack(side="left")
         ttk.Radiobutton(
             role_row,
-            text="Administrator",
+            text="Manager",
             variable=self.register_role_var,
-            value="Admin",
+            value="Manager",
+            command=self._toggle_admin_setup,
+        ).pack(side="left", padx=(18, 0))
+        ttk.Radiobutton(
+            role_row,
+            text="Boss",
+            variable=self.register_role_var,
+            value="Boss",
             command=self._toggle_admin_setup,
         ).pack(side="left", padx=(18, 0))
 
@@ -398,7 +405,7 @@ class LoginDialog(tk.Toplevel):
         threading.Thread(target=check, daemon=True).start()
 
     def _toggle_admin_setup(self) -> None:
-        if self.register_role_var.get() == "Admin":
+        if self.register_role_var.get() in ("Manager", "Boss"):
             self.setup_label.grid(row=12, column=0, sticky="w")
             self.setup_entry.grid(row=13, column=0, sticky="ew", pady=(3, 10))
             self.registration_note.configure(text="Admin registration requires the private bootstrap key.")
@@ -452,7 +459,7 @@ class LoginDialog(tk.Toplevel):
             return
         role = self.register_role_var.get()
         setup_code = self.register_setup_var.get().strip()
-        if role == "Admin" and not setup_code:
+        if role in ("Manager", "Boss") and not setup_code:
             messagebox.showerror("Create account", "Admin bootstrap key is required.", parent=self)
             return
         self.result = {
@@ -734,7 +741,7 @@ class WorkHubDesktop(tk.Tk):
             response.raise_for_status()
             self.overview = response.json()
             self.employees = []
-            if self.user.get("role") == "Admin":
+            if self.user.get("role") in ("Manager", "Boss"):
                 employees_response = self.session.get(f"{BASE_URL}/admin/users", timeout=10)
                 employees_response.raise_for_status()
                 self.employees = employees_response.json()
@@ -761,7 +768,7 @@ class WorkHubDesktop(tk.Tk):
         self.stop_work_btn.configure(state="normal" if session and session.get("is_active") else "disabled")
         self.start_break_btn.configure(state="normal" if session and session.get("is_active") and not active_break else "disabled")
         self.stop_break_btn.configure(state="normal" if active_break else "disabled")
-        self.post_announcement_btn.configure(state="normal" if self.user and self.user.get("role") == "Admin" else "disabled")
+        self.post_announcement_btn.configure(state="normal" if self.user and self.user.get("role") in ("Manager", "Boss") else "disabled")
 
         self._render_calendar()
         self._render_employees()
@@ -773,7 +780,7 @@ class WorkHubDesktop(tk.Tk):
     def _render_employees(self) -> None:
         for child in self.employees_list.winfo_children():
             child.destroy()
-        if not self.user or self.user.get("role") != "Admin":
+        if not self.user or self.user.get("role") not in ("Manager", "Boss"):
             tk.Label(self.employees_list, text="Admin access required to view employees.", bg="#ffffff", fg="#64748b", wraplength=260, justify="left").pack(anchor="w")
             return
 
@@ -1018,7 +1025,7 @@ class WorkHubDesktop(tk.Tk):
             messagebox.showerror("Stop break", str(exc))
 
     def post_announcement(self) -> None:
-        if not self.user or self.user.get("role") != "Admin":
+        if not self.user or self.user.get("role") not in ("Manager", "Boss"):
             return
         dialog = AnnouncementDialog(self)
         self.wait_window(dialog)

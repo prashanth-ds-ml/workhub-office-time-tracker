@@ -74,13 +74,13 @@ def run() -> None:
                     "username": "Integration Admin",
                     "email": "admin@sims.healthcare",
                     "password": "admin123",
-                    "role": "Admin",
+                    "role": "Manager",
                 },
             )
         )
         admin = admin_auth["user"]
         admin_headers = auth_headers(admin_auth)
-        assert admin["role"] == "Admin"
+        assert admin["role"] == "Manager"
         assert "password" not in admin
         expect(
             client.post(
@@ -152,10 +152,10 @@ def run() -> None:
             client.patch(
                 f"/admin/users/{created['id']}",
                 headers=admin_headers,
-                json={"username": "Managed Employee Updated", "role": "Admin"},
+                json={"username": "Managed Employee Updated", "role": "Manager"},
             )
         )
-        assert updated["username"] == "Managed Employee Updated" and updated["role"] == "Admin"
+        assert updated["username"] == "Managed Employee Updated" and updated["role"] == "Manager"
 
         event = expect(
             client.post(

@@ -5,7 +5,7 @@ async function render() {
   if (email) {
     emailEl.textContent = email;
     emailEl.className = "status ok";
-    noteEl.textContent = "You'll get a reminder at 11am if you haven't punched in.";
+    noteEl.textContent = "You'll get a reminder between 10:45-11:00am if you haven't punched in, and between 5:30-6:00pm if you haven't punched out.";
   } else {
     emailEl.textContent = "not detected";
     emailEl.className = "status warn";

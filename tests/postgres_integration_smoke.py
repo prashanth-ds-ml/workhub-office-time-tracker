@@ -36,7 +36,7 @@ def main() -> None:
                     "username": "Postgres Admin",
                     "email": f"admin+{suffix}@postgres.test",
                     "password": "secret1",
-                    "role": "Admin",
+                    "role": "Manager",
                     "bootstrap_secret": "postgres-bootstrap-secret",
                 },
             )

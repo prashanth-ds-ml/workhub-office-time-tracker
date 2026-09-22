@@ -245,7 +245,7 @@ class EmployeeDialog(tk.Toplevel):
             ),
             (
                 "Role",
-                ttk.Combobox(frame, textvariable=self.role_var, values=["User", "Admin"], state="readonly", width=32),
+                ttk.Combobox(frame, textvariable=self.role_var, values=["User", "Manager", "Boss"], state="readonly", width=32),
             ),
         ]
         for row, (label, widget) in enumerate(fields, start=2):
@@ -412,7 +412,7 @@ class WorkHubAdminDesktop(WorkHubDesktop):
             return
         try:
             self.overview = self._request("get", "/dashboard/overview", params={"month": self.month_key}).json()
-            if self.user.get("role") == "Admin":
+            if self.user.get("role") in ("Manager", "Boss"):
                 self.employees = self._request("get", "/admin/users").json()
                 self.admin_totals = self._request("get", "/admin/dashboard").json()
                 self.analytics = self._request("get", "/admin/analytics", params={"month": self.month_key}).json()
@@ -439,7 +439,7 @@ class WorkHubAdminDesktop(WorkHubDesktop):
     def _apply_role_access(self) -> None:
         if not self.user:
             return
-        is_admin = self.user.get("role") == "Admin"
+        is_admin = self.user.get("role") in ("Manager", "Boss")
         self.console_label.configure(text="ADMIN CONSOLE" if is_admin else "EMPLOYEE WORKSPACE")
         self.title("WorkHub Admin" if is_admin else "WorkHub Employee")
         allowed = (
@@ -558,7 +558,7 @@ class WorkHubAdminDesktop(WorkHubDesktop):
         return "Working"
 
     def _page_dashboard(self) -> None:
-        if self.user and self.user.get("role") != "Admin":
+        if self.user and self.user.get("role") not in ("Manager", "Boss"):
             self._page_employee_dashboard()
             return
         statuses = [self._employee_status(employee) for employee in self.employees]
@@ -667,7 +667,7 @@ class WorkHubAdminDesktop(WorkHubDesktop):
         self.month_label.pack(side="left", padx=12)
         ttk.Button(toolbar, text="›", command=self.next_month).pack(side="left")
         ttk.Button(toolbar, text="Today", command=self.go_today).pack(side="left", padx=(10, 0))
-        if self.user and self.user.get("role") == "Admin":
+        if self.user and self.user.get("role") in ("Manager", "Boss"):
             ttk.Button(toolbar, text="+ Add Event", style="Primary.TButton", command=self.add_calendar_event).pack(side="right")
 
         split = tk.Frame(self.page_host, bg=BG)
@@ -726,7 +726,7 @@ class WorkHubAdminDesktop(WorkHubDesktop):
             tk.Label(details, text=f"Minimum work: {format_minutes(policy.get('min_work_hours', 0) * 60)}", bg=SURFACE, fg=MUTED).pack(anchor="w", padx=18, pady=(18, 2))
             tk.Label(details, text=f"Target work: {format_minutes(policy.get('target_work_hours', 0) * 60)}", bg=SURFACE, fg=MUTED).pack(anchor="w", padx=18, pady=2)
             tk.Label(details, text=f"Maximum break: {format_minutes(policy.get('max_break_minutes', 0))}", bg=SURFACE, fg=MUTED).pack(anchor="w", padx=18, pady=2)
-        if self.user and self.user.get("role") == "Admin":
+        if self.user and self.user.get("role") in ("Manager", "Boss"):
             ttk.Button(details, text="Edit date", command=self.edit_selected_event).pack(anchor="w", padx=18, pady=(22, 0))
 
     def select_calendar_date(self, date_key: str) -> None:
@@ -788,7 +788,7 @@ class WorkHubAdminDesktop(WorkHubDesktop):
         ttk.Combobox(
             toolbar,
             textvariable=self.employee_role_filter,
-            values=["All roles", "User", "Admin"],
+            values=["All roles", "User", "Manager", "Boss"],
             state="readonly",
             width=13,
         ).pack(side="left", padx=(8, 0))
@@ -1008,7 +1008,7 @@ class WorkHubAdminDesktop(WorkHubDesktop):
         toolbar = tk.Frame(self.page_host, bg=BG)
         toolbar.pack(fill="x", pady=(0, 10))
         tk.Label(toolbar, text="Updates sent to the full team", bg=BG, fg=MUTED).pack(side="left")
-        if self.user and self.user.get("role") == "Admin":
+        if self.user and self.user.get("role") in ("Manager", "Boss"):
             ttk.Button(toolbar, text="+ New announcement", style="Primary.TButton", command=self.post_announcement).pack(side="right")
         announcements = self.overview.get("announcements", [])
         if not announcements:

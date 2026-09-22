@@ -513,6 +513,21 @@ def _seed_initial_data() -> None:
             _save_json(path, [])
 
 
+VALID_ROLES = {"User", "Manager", "Boss"}
+PRIVILEGED_ROLES = {"Manager", "Boss"}  # both get read access to every employee's data
+MANAGE_ROLES = {"Manager"}  # only Manager can create/edit users, policy, calendar, announcements
+
+
+def _is_privileged(role: str) -> bool:
+    """Can view every employee's attendance/sessions/reports (Manager or Boss)."""
+    return role in PRIVILEGED_ROLES
+
+
+def _can_manage(role: str) -> bool:
+    """Can create/edit users, company policy, calendar events, and announcements. Boss cannot."""
+    return role in MANAGE_ROLES
+
+
 class User(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     username: str
@@ -527,8 +542,8 @@ class User(BaseModel):
 
     @validator("role")
     def _check_role(cls, value: str) -> str:
-        if value not in {"User", "Admin"}:
-            raise ValueError("role must be 'User' or 'Admin'")
+        if value not in VALID_ROLES:
+            raise ValueError(f"role must be one of {sorted(VALID_ROLES)}")
         return value
 
 
@@ -563,8 +578,8 @@ class RegistrationRequest(BaseModel):
 
     @validator("role")
     def _check_registration_role(cls, value: str) -> str:
-        if value not in {"User", "Admin"}:
-            raise ValueError("role must be 'User' or 'Admin'")
+        if value not in VALID_ROLES:
+            raise ValueError(f"role must be one of {sorted(VALID_ROLES)}")
         return value
 
 
@@ -586,8 +601,8 @@ class AdminUserCreate(BaseModel):
 
     @validator("role")
     def _check_role(cls, value: str) -> str:
-        if value not in {"User", "Admin"}:
-            raise ValueError("role must be 'User' or 'Admin'")
+        if value not in VALID_ROLES:
+            raise ValueError(f"role must be one of {sorted(VALID_ROLES)}")
         return value
 
 
@@ -600,8 +615,8 @@ class AdminUserUpdate(BaseModel):
 
     @validator("role")
     def _check_role(cls, value: Optional[str]) -> Optional[str]:
-        if value is not None and value not in {"User", "Admin"}:
-            raise ValueError("role must be 'User' or 'Admin'")
+        if value is not None and value not in VALID_ROLES:
+            raise ValueError(f"role must be one of {sorted(VALID_ROLES)}")
         return value
 
 
@@ -886,8 +901,14 @@ def get_current_user(
 
 
 def is_admin(current_user: User = Depends(get_current_user)) -> User:
-    if current_user.role != "Admin":
+    if not _is_privileged(current_user.role):
         raise HTTPException(status_code=403, detail="Admin rights required")
+    return current_user
+
+
+def is_manager(current_user: User = Depends(get_current_user)) -> User:
+    if not _can_manage(current_user.role):
+        raise HTTPException(status_code=403, detail="Manager rights required")
     return current_user
 
 
@@ -1576,7 +1597,7 @@ def register(payload: RegistrationRequest, response: Response) -> Dict[str, Any]
         raise HTTPException(status_code=400, detail="Name, email, and password are required")
     if _user_row_by_email(email):
         raise HTTPException(status_code=400, detail="Email already registered")
-    if payload.role == "Admin":
+    if _is_privileged(payload.role):
         if not hmac.compare_digest(payload.bootstrap_secret or "", BOOTSTRAP_SECRET):
             raise HTTPException(status_code=403, detail="Invalid Admin bootstrap key")
     elif not ALLOW_SELF_REGISTRATION:
@@ -1690,10 +1711,8 @@ def logout(response: Response) -> Dict[str, str]:
 def set_office_hours(
     user_id: str,
     payload: OfficeHoursUpdate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(is_manager),
 ) -> Dict[str, str]:
-    if current_user.role != "Admin":
-        raise HTTPException(status_code=403, detail="Admin rights required")
     user = get_user_by_id(user_id)
     user.office_hours = {"start": payload.start, "end": payload.end}
     _sync_cached_user(user)
@@ -1705,10 +1724,8 @@ def set_office_hours(
 def set_rules(
     user_id: str,
     payload: RulesUpdate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(is_manager),
 ) -> Dict[str, str]:
-    if current_user.role != "Admin":
-        raise HTTPException(status_code=403, detail="Admin rights required")
     user = get_user_by_id(user_id)
     current_rules = user.rules or {}
     current_rules.update({key: value for key, value in payload.dict().items() if value is not None})
@@ -1735,7 +1752,7 @@ def get_company_work_policy(current_user: User = Depends(get_current_user)) -> D
 @app.post("/company/work-policy")
 def set_company_work_policy(
     payload: CompanyWorkPolicyUpdate,
-    current_user: User = Depends(is_admin),
+    current_user: User = Depends(is_manager),
 ) -> Dict[str, Any]:
     policy = {
         "_singleton": "company_work_policy",
@@ -1765,7 +1782,7 @@ def list_sessions(
     user_id: Optional[str] = None,
     current_user: User = Depends(get_current_user),
 ) -> List[Dict[str, Any]]:
-    target_user_id = user_id if current_user.role == "Admin" and user_id else current_user.id
+    target_user_id = user_id if _is_privileged(current_user.role) and user_id else current_user.id
     sessions = _sessions_for_user(target_user_id)
     session_breaks = _breaks_by_session_ids([session.id for session in sessions])
     return [_session_view(session, session_breaks=session_breaks.get(session.id, [])) for session in sessions]
@@ -1777,7 +1794,7 @@ def start_session(
     payload: Optional[StartSessionRequest] = None,
     current_user: User = Depends(get_current_user),
 ) -> Session:
-    if current_user.id != user_id and current_user.role != "Admin":
+    if current_user.id != user_id and not _can_manage(current_user.role):
         raise HTTPException(status_code=403, detail="No permission to start session for other users")
     if _active_session_for_user(user_id):
         raise HTTPException(status_code=400, detail="An active session already exists")
@@ -1792,7 +1809,7 @@ def stop_session(session_id: str, current_user: User = Depends(get_current_user)
     session = _session_by_id(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    if session.user_id != current_user.id and current_user.role != "Admin":
+    if session.user_id != current_user.id and not _can_manage(current_user.role):
         raise HTTPException(status_code=403, detail="No permission to stop this session")
     if session.end is not None:
         raise HTTPException(status_code=400, detail="Session already stopped")
@@ -1812,7 +1829,7 @@ def start_break(session_id: str, current_user: User = Depends(get_current_user))
     session = _session_by_id(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    if session.user_id != current_user.id and current_user.role != "Admin":
+    if session.user_id != current_user.id and not _can_manage(current_user.role):
         raise HTTPException(status_code=403, detail="No permission to modify this session")
     if session.end is not None:
         raise HTTPException(status_code=400, detail="Session already stopped")
@@ -1831,7 +1848,7 @@ def stop_break(session_id: str, current_user: User = Depends(get_current_user)) 
     session = _session_by_id(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    if session.user_id != current_user.id and current_user.role != "Admin":
+    if session.user_id != current_user.id and not _can_manage(current_user.role):
         raise HTTPException(status_code=403, detail="No permission to modify this session")
     brk = _active_break_for_session(session_id)
     if not brk:
@@ -1848,7 +1865,7 @@ def list_session_breaks(session_id: str, current_user: User = Depends(get_curren
     session = _session_by_id(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    if session.user_id != current_user.id and current_user.role != "Admin":
+    if session.user_id != current_user.id and not _is_privileged(current_user.role):
         raise HTTPException(status_code=403, detail="No permission to view this session")
     session_breaks = _breaks_for_session(session_id)
     _sync_session_breaks(session, session_breaks=session_breaks)
@@ -1887,7 +1904,7 @@ def list_calendar_events(
 @app.post("/calendar/events")
 def create_or_update_calendar_event(
     payload: CalendarEventCreate,
-    current_user: User = Depends(is_admin),
+    current_user: User = Depends(is_manager),
 ) -> Dict[str, Any]:
     event_date = _parse_date(payload.date)
     existing = next((event for event in calendar_events_cache if event.date == payload.date), None)
@@ -1959,7 +1976,7 @@ def list_company_events(current_user: User = Depends(get_current_user)) -> List[
 @app.post("/company-events")
 def create_company_event(
     payload: CompanyEventCreate,
-    current_user: User = Depends(is_admin),
+    current_user: User = Depends(is_manager),
 ) -> Dict[str, Any]:
     event = CompanyEvent(
         title=payload.title,
@@ -1986,7 +2003,7 @@ def list_announcements(current_user: User = Depends(get_current_user)) -> List[D
 @app.post("/announcements")
 def create_announcement(
     payload: AnnouncementCreate,
-    current_user: User = Depends(is_admin),
+    current_user: User = Depends(is_manager),
 ) -> Dict[str, Any]:
     announcement = Announcement(
         title=payload.title.strip(),
@@ -2171,7 +2188,7 @@ def admin_analytics(
 @app.get("/admin/audit-log")
 def admin_audit_log(
     limit: int = Query(100, ge=1, le=500),
-    current_user: User = Depends(is_admin),
+    current_user: User = Depends(is_manager),
 ) -> List[Dict[str, Any]]:
     return _query_json(AUDIT_LOG_FILE, sort=[("created_at", -1)], limit=limit)
 
@@ -2202,13 +2219,16 @@ def web_bootstrap(
 @app.get("/web/attendance")
 def web_attendance(
     month: Optional[str] = None,
+    user_id: Optional[str] = None,
     current_user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
+    target_user_id = user_id if user_id and _is_privileged(current_user.role) else current_user.id
     selected_month = month or _current_month_label()
-    sessions = _sessions_for_user(current_user.id, selected_month)
+    sessions = _sessions_for_user(target_user_id, selected_month)
     session_breaks = _breaks_by_session_ids([session.id for session in sessions])
     return {
         "month": selected_month,
+        "user_id": target_user_id,
         "sessions": [_session_view(session, session_breaks=session_breaks.get(session.id, [])) for session in sessions],
     }
 
@@ -2240,7 +2260,7 @@ def admin_users(current_user: User = Depends(is_admin)) -> List[Dict[str, Any]]:
 @app.post("/admin/users")
 def admin_create_user(
     payload: AdminUserCreate,
-    current_user: User = Depends(is_admin),
+    current_user: User = Depends(is_manager),
 ) -> Dict[str, Any]:
     username = payload.username.strip()
     email = _normalize_company_email(payload.email)
@@ -2267,7 +2287,7 @@ def admin_create_user(
 def admin_update_user(
     user_id: str,
     payload: AdminUserUpdate,
-    current_user: User = Depends(is_admin),
+    current_user: User = Depends(is_manager),
 ) -> Dict[str, Any]:
     user = get_user_by_id(user_id)
     updates = payload.dict(exclude_unset=True)
@@ -2352,7 +2372,7 @@ def cron_daily_digest(_: None = Depends(_require_cron_secret)) -> Dict[str, Any]
     if not late_names and not absent_names:
         return {"sent": False, "reason": "everyone on time"}
 
-    admin_emails = [user.email for user in users_cache if user.role == "Admin" and user.is_active]
+    admin_emails = [user.email for user in users_cache if _is_privileged(user.role) and user.is_active]
     if not admin_emails:
         return {"sent": False, "reason": "no admin recipients"}
 
