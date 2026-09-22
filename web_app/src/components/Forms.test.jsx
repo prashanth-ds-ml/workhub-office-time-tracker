@@ -55,6 +55,7 @@ test("submits employee creation payload and closes on success", async () => {
   await user.type(screen.getByLabelText("Company email"), "managed@sims.healthcare");
   await user.type(screen.getByLabelText("Temporary password"), "secret123");
   await user.selectOptions(screen.getByLabelText("Role"), "Manager");
+  await user.type(screen.getByLabelText("Manager bootstrap key"), "manager-key");
   await user.click(screen.getByRole("button", { name: "Save changes" }));
 
   expect(api).toHaveBeenCalledWith("/admin/users", {
@@ -65,6 +66,7 @@ test("submits employee creation payload and closes on success", async () => {
       email: "managed@sims.healthcare",
       password: "secret123",
       role: "Manager",
+      bootstrap_secret: "manager-key",
     },
   });
   expect(onDone).toHaveBeenCalled();

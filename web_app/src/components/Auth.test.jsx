@@ -68,5 +68,5 @@ test("limits registration to administrators when self-registration is disabled",
   expect(screen.getByText("Employee self-registration is disabled. Only administrators with the bootstrap key can create an account here.")).toBeInTheDocument();
   expect(screen.getByLabelText("Account type")).toHaveDisplayValue("Manager");
   expect(screen.queryByRole("option", { name: "Employee" })).not.toBeInTheDocument();
-  expect(screen.getByLabelText("Admin bootstrap key")).toBeInTheDocument();
+  expect(screen.getByLabelText("Manager bootstrap key")).toBeInTheDocument();
 });

@@ -185,6 +185,7 @@ async function focusOrOpenWorkhubTab() {
 
 const POPUP_WIDTH = 320 + 52; // card width + horizontal padding
 const POPUP_HEIGHT = 320;
+const popupWindowByNotification = new Map();
 
 async function showReminderPopup(title, message) {
   // Center against the browser window the user is actually looking at,
@@ -205,7 +206,7 @@ async function showReminderPopup(title, message) {
   }
 
   const url = `reminder.html?${new URLSearchParams({ title, message }).toString()}`;
-  chrome.windows.create({
+  const popupWindow = await chrome.windows.create({
     url,
     type: "popup",
     width: POPUP_WIDTH,
@@ -214,4 +215,25 @@ async function showReminderPopup(title, message) {
     top,
     focused: true,
   });
+
+  // Windows (and some Linux/macOS window managers) block background apps from
+  // stealing focus, so the popup window above can open without ever coming to
+  // the front - it just flashes in the taskbar. A system notification bypasses
+  // that restriction and always surfaces, so pair the popup with one.
+  const notificationId = `workhub-popup-${Date.now()}`;
+  popupWindowByNotification.set(notificationId, popupWindow.id);
+  chrome.notifications.create(notificationId, {
+    type: "basic",
+    iconUrl: "icons/icon128.png",
+    title,
+    message,
+    priority: 2,
+    requireInteraction: true,
+  });
 }
+
+chrome.notifications.onClicked.addListener(notificationId => {
+  const windowId = popupWindowByNotification.get(notificationId);
+  if (windowId != null) chrome.windows.update(windowId, { focused: true }).catch(() => {});
+  chrome.notifications.clear(notificationId);
+});

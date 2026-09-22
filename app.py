@@ -57,7 +57,19 @@ JWT_SECRET = os.getenv("WORKHUB_JWT_SECRET", "development-only-change-me")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = int(os.getenv("WORKHUB_JWT_EXPIRE_HOURS", "12"))
 PASSWORD_RESET_MINUTES = int(os.getenv("WORKHUB_PASSWORD_RESET_MINUTES", "30"))
-BOOTSTRAP_SECRET = os.getenv("WORKHUB_BOOTSTRAP_SECRET", "")
+_LEGACY_BOOTSTRAP_SECRET = os.getenv("WORKHUB_BOOTSTRAP_SECRET", "")
+# Separate keys for Manager vs Boss so different people can gate each role.
+# Each falls back to the old shared WORKHUB_BOOTSTRAP_SECRET until the new,
+# role-specific env vars are configured - this avoids a repeat of the outage
+# where a stricter requirement crashed production before it was configured.
+MANAGER_BOOTSTRAP_SECRET = os.getenv("WORKHUB_MANAGER_BOOTSTRAP_SECRET", "") or _LEGACY_BOOTSTRAP_SECRET
+BOSS_BOOTSTRAP_SECRET = os.getenv("WORKHUB_BOSS_BOOTSTRAP_SECRET", "") or _LEGACY_BOOTSTRAP_SECRET
+BOOTSTRAP_SECRETS_BY_ROLE = {"Manager": MANAGER_BOOTSTRAP_SECRET, "Boss": BOSS_BOOTSTRAP_SECRET}
+
+
+def _check_bootstrap_secret(role: str, provided: Optional[str]) -> bool:
+    expected = BOOTSTRAP_SECRETS_BY_ROLE.get(role, "")
+    return hmac.compare_digest(provided or "", expected)
 AUTH_COOKIE_NAME = "workhub_session"
 ALLOWED_EMAIL_DOMAIN = os.getenv("WORKHUB_EMAIL_DOMAIN", "sims.healthcare").strip().lower()
 configured_cors_origins = [
@@ -71,8 +83,11 @@ ALLOW_SELF_REGISTRATION = os.getenv(
 ).lower() == "true"
 if WORKHUB_ENV == "production" and JWT_SECRET == "development-only-change-me":
     raise RuntimeError("WORKHUB_JWT_SECRET must be set in production")
-if WORKHUB_ENV == "production" and not BOOTSTRAP_SECRET:
-    raise RuntimeError("WORKHUB_BOOTSTRAP_SECRET must be set in production")
+if WORKHUB_ENV == "production" and not (MANAGER_BOOTSTRAP_SECRET and BOSS_BOOTSTRAP_SECRET):
+    raise RuntimeError(
+        "WORKHUB_MANAGER_BOOTSTRAP_SECRET and WORKHUB_BOSS_BOOTSTRAP_SECRET "
+        "(or legacy WORKHUB_BOOTSTRAP_SECRET) must be set in production"
+    )
 
 app.add_middleware(
     CORSMiddleware,
@@ -605,6 +620,7 @@ class AdminUserCreate(BaseModel):
     email: str
     password: str
     role: str = "User"
+    bootstrap_secret: Optional[str] = None
 
     @validator("role")
     def _check_role(cls, value: str) -> str:
@@ -1611,8 +1627,8 @@ def register(payload: RegistrationRequest, response: Response) -> Dict[str, Any]
     if _user_row_by_email(email):
         raise HTTPException(status_code=400, detail="Email already registered")
     if _is_privileged(payload.role):
-        if not hmac.compare_digest(payload.bootstrap_secret or "", BOOTSTRAP_SECRET):
-            raise HTTPException(status_code=403, detail="Invalid Admin bootstrap key")
+        if not _check_bootstrap_secret(payload.role, payload.bootstrap_secret):
+            raise HTTPException(status_code=403, detail=f"Invalid {payload.role} bootstrap key")
     elif not ALLOW_SELF_REGISTRATION:
         raise HTTPException(status_code=403, detail="Self-registration is disabled; contact an administrator")
     company_policy = _company_work_policy()
@@ -2281,6 +2297,8 @@ def admin_create_user(
         raise HTTPException(status_code=400, detail="Name, email, and password are required")
     if _user_row_by_email(email):
         raise HTTPException(status_code=400, detail="Email already registered")
+    if _is_privileged(payload.role) and not _check_bootstrap_secret(payload.role, payload.bootstrap_secret):
+        raise HTTPException(status_code=403, detail=f"Invalid {payload.role} bootstrap key")
     company_policy = _company_work_policy()
     user = User(
         username=username,
