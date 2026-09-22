@@ -37,7 +37,6 @@ from email.message import EmailMessage
 
 from storage import (
     claim_first_admin,
-    clear_rows,
     delete_row,
     find_one_row,
     load_rows,
@@ -2454,27 +2453,6 @@ def admin_update_user(
     if changed_breaks:
         _upsert_models(BREAKS_FILE, changed_breaks)
     return _user_summary(user)
-
-
-@app.post("/admin/danger/wipe-all-accounts")
-def wipe_all_accounts(current_user: User = Depends(is_manager)) -> Dict[str, Any]:
-    # One-time cleanup for the initial rollout. Remove this endpoint once used -
-    # it deletes every account (including the caller's) and cannot be undone.
-    counts = {
-        "users": len(users_cache),
-        "sessions": len(sessions_cache),
-        "breaks": len(breaks_cache),
-        "announcement_reads": len(announcement_reads_cache),
-        "alert_acknowledgements": len(alert_ack_cache),
-    }
-    clear_rows(USERS_FILE)
-    clear_rows(SESSIONS_FILE)
-    clear_rows(BREAKS_FILE)
-    clear_rows(ANNOUNCEMENT_READS_FILE)
-    clear_rows(ALERT_ACK_FILE)
-    _refresh_cache(force=True)
-    logger.warning("Wiped all accounts via /admin/danger/wipe-all-accounts, deleted: %s", counts)
-    return {"message": "All accounts deleted.", "deleted": counts}
 
 
 CRON_SECRET = os.getenv("CRON_SECRET", "")
