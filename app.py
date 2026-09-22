@@ -12,6 +12,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
 import smtplib
@@ -46,6 +47,8 @@ from storage import (
 )
 
 load_dotenv()
+
+logger = logging.getLogger("workhub")
 
 app = FastAPI(title="Office Time Tracker API")
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -374,13 +377,17 @@ def _send_email(to: str, subject: str, body: str) -> bool:
     message["Subject"] = subject
     message.set_content(body)
 
-    with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as smtp:
-        if use_tls:
-            smtp.starttls()
-        if smtp_user:
-            smtp.login(smtp_user, smtp_password)
-        smtp.send_message(message)
-    return True
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as smtp:
+            if use_tls:
+                smtp.starttls()
+            if smtp_user:
+                smtp.login(smtp_user, smtp_password)
+            smtp.send_message(message)
+        return True
+    except Exception:
+        logger.exception("Failed to send email to %s via %s:%s", to, smtp_host, smtp_port)
+        return False
 
 
 def _send_password_reset_email(email: str, token: str) -> bool:
@@ -1683,6 +1690,7 @@ def forgot_password(payload: ForgotPasswordRequest) -> Dict[str, Any]:
     try:
         delivered = _send_password_reset_email(user.email, token)
     except Exception:
+        logger.exception("Unexpected error sending password reset email to %s", user.email)
         delivered = False
 
     response["delivery"] = "email" if delivered else "manual"
