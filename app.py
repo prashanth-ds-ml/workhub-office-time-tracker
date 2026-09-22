@@ -540,6 +540,13 @@ class User(BaseModel):
     password_reset_hash: Optional[str] = None
     password_reset_expires_at: Optional[str] = None
 
+    @validator("role", pre=True)
+    def _migrate_legacy_role(cls, value: str) -> str:
+        # Existing stored records may still say "Admin" from before the Manager/Boss
+        # split; treat it as Manager (the old Admin's full permission level) rather
+        # than fail to load the account.
+        return "Manager" if value == "Admin" else value
+
     @validator("role")
     def _check_role(cls, value: str) -> str:
         if value not in VALID_ROLES:
@@ -801,7 +808,13 @@ def _refresh_cache(force: bool = False) -> None:
         now = time.monotonic()
         if not force and now - _cache_refreshed_at < _CACHE_TTL_SECONDS:
             return
-        loaded_users = [User(**row) for row in _load_json(USERS_FILE)]
+        raw_user_rows = _load_json(USERS_FILE)
+        legacy_role_migrated = False
+        for row in raw_user_rows:
+            if row.get("role") == "Admin":
+                row["role"] = "Manager"
+                legacy_role_migrated = True
+        loaded_users = [User(**row) for row in raw_user_rows]
         loaded_sessions = [_normalize_session(Session(**row)) for row in _load_json(SESSIONS_FILE)]
         loaded_breaks = [_normalize_break(Break(**row)) for row in _load_json(BREAKS_FILE)]
         loaded_calendar_events = [
@@ -833,7 +846,7 @@ def _refresh_cache(force: bool = False) -> None:
         company_events_cache = loaded_company_events
         announcement_reads_cache = loaded_reads
         alert_ack_cache = loaded_alerts
-        if _migrate_cached_timestamps_to_ist():
+        if legacy_role_migrated or _migrate_cached_timestamps_to_ist():
             _persist_cache()
         _cache_refreshed_at = now
 
