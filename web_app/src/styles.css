@@ -54,6 +54,20 @@ button {
   cursor: pointer;
 }
 
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.primary:active,
+.ghost:active,
+.danger:active,
+.icon-button:active,
+.text-button:active {
+  transform: scale(0.97);
+}
+
 .launcher-mark {
   display: block;
   object-fit: contain;
@@ -794,6 +808,47 @@ tbody tr:hover {
 
 .row-clickable {
   cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.row-clickable:hover {
+  background: #eef6dc;
+}
+
+.row-clickable:hover .row-chevron {
+  opacity: 1;
+  transform: translateX(2px);
+}
+
+.row-chevron {
+  display: inline-flex;
+  color: var(--primary-hover);
+  opacity: 0;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  vertical-align: middle;
+}
+
+.row-chevron svg {
+  width: 16px;
+}
+
+.table-wrap {
+  scrollbar-width: thin;
+  scrollbar-color: #c7d1e0 transparent;
+}
+
+.table-wrap::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+
+.table-wrap::-webkit-scrollbar-thumb {
+  background: #c7d1e0;
+  border-radius: 8px;
+}
+
+.table-wrap::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 th {
