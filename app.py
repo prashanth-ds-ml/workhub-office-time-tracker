@@ -2455,29 +2455,6 @@ def admin_update_user(
     return _user_summary(user)
 
 
-@app.post("/admin/danger/delete-demo-accounts")
-def delete_demo_accounts(current_user: User = Depends(is_manager)) -> Dict[str, Any]:
-    # One-time cleanup for the Demo Manager / Demo Boss accounts created for UI
-    # testing. Remove this endpoint once used - it permanently deletes those two
-    # accounts (and their sessions/breaks) and cannot be undone.
-    target_emails = {"demo.manager@sims.healthcare", "demo.boss@sims.healthcare"}
-    deleted: List[str] = []
-    for user in list(users_cache):
-        if user.email not in target_emails:
-            continue
-        for session in [s for s in sessions_cache if s.user_id == user.id]:
-            for brk in [b for b in breaks_cache if b.session_id == session.id]:
-                delete_row(BREAKS_FILE, brk.id)
-                breaks_cache.remove(brk)
-            delete_row(SESSIONS_FILE, session.id)
-            sessions_cache.remove(session)
-        delete_row(USERS_FILE, user.id)
-        users_cache.remove(user)
-        deleted.append(user.email)
-    logger.warning("Deleted demo accounts via /admin/danger/delete-demo-accounts: %s", deleted)
-    return {"message": "Deleted demo accounts.", "deleted": deleted}
-
-
 CRON_SECRET = os.getenv("CRON_SECRET", "")
 
 
