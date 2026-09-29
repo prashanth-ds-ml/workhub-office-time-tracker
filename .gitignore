@@ -12,6 +12,8 @@ __pycache__/
 build/
 dist/
 release/
+dist_reminder/
+build_reminder/
 ui/node_modules/
 web_app/node_modules/
 web_app/dist/
