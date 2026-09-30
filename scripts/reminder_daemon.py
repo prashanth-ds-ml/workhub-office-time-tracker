@@ -235,20 +235,70 @@ def uninstall_startup() -> None:
         print("No startup launcher found.")
 
 
+def _target_command_parts(extra_args: str = "") -> tuple[str, str]:
+    """Like _target_command, but split into (command, arguments) the way a
+    Task Scheduler <Exec> action wants them, rather than one shell string."""
+    if getattr(sys, "frozen", False):
+        exe_path = STABLE_EXE_PATH if STABLE_EXE_PATH.is_file() else Path(sys.executable)
+        return str(exe_path), extra_args
+    script_path = Path(__file__).resolve()
+    return _pythonw_executable(), f'"{script_path}" {extra_args}'.strip()
+
+
+RESUME_TASK_XML = """<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <Triggers>
+    <EventTrigger>
+      <Enabled>true</Enabled>
+      <Delay>PT15S</Delay>
+      <Subscription>&lt;QueryList&gt;&lt;Query Id="0" Path="System"&gt;&lt;Select Path="System"&gt;{event_query}&lt;/Select&gt;&lt;/Query&gt;&lt;/QueryList&gt;</Subscription>
+    </EventTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>false</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT1M</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>{command}</Command>
+      <Arguments>{arguments}</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+"""
+
+
 def install_resume_trigger() -> None:
-    task_run = _target_command("--open-only")
+    # Built via a full task XML (instead of the simple `schtasks /create /sc
+    # onevent ...` flags) because that simple form defaults to
+    # DisallowStartIfOnBatteries/StopIfGoingOnBatteries = true, which silently
+    # no-ops the task on a laptop running on battery - i.e. most of the time.
+    command, arguments = _target_command_parts("--open-only")
+    xml = RESUME_TASK_XML.format(event_query=RESUME_EVENT_QUERY, command=command, arguments=arguments)
+    xml_path = STATE_DIR / "resume_task.xml"
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    xml_path.write_text(xml, encoding="utf-16")
     result = subprocess.run(
-        [
-            "schtasks", "/create", "/tn", RESUME_TASK_NAME,
-            "/tr", task_run,
-            "/sc", "onevent",
-            "/ec", "System",
-            "/mo", RESUME_EVENT_QUERY,
-            "/rl", "limited",
-            "/f",
-        ],
+        ["schtasks", "/create", "/tn", RESUME_TASK_NAME, "/xml", str(xml_path), "/f"],
         capture_output=True, text=True,
     )
+    xml_path.unlink(missing_ok=True)
     print(result.stdout.strip() or result.stderr.strip())
     if result.returncode != 0:
         print("Failed to register the resume trigger (see above).")

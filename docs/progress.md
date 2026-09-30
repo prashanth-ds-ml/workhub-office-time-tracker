@@ -21,3 +21,6 @@
 | 2026‑07‑02 | Reports CSV export added | ✅ | Admin analytics now export a real CSV artifact from the web app. |
 | 2026‑07‑03 | Beta readiness pass | ✅ | Web app audited for rollout, docs updated, and current verification rerun for employee beta. |
 | 2026‑07‑03 | Recovery and date fixes | ✅ | Browser forgot-password entry restored and admin calendar dates now normalize common formats before save. |
+| 2026‑09‑29 | Reports → Employee card page | ✅ | Clicking an employee in Reports now opens a dedicated card view (stats + attendance) instead of the shared Attendance page. |
+| 2026‑09‑29 | UI/UX polish pass | ✅ | Focus-visible rings, button press feedback, clickable-row affordance, styled scrollbars. |
+| 2026‑09‑30 | Standalone reminder app | ✅ | Self-installing `.exe` (see `docs/REMINDER_APP.md`) replaces the browser-extension reminder popup; fixed a Task Scheduler battery-power gotcha that silently blocked the sleep/wake trigger. |
