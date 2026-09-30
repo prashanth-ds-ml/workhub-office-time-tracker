@@ -24,3 +24,5 @@
 | 2026‑09‑29 | Reports → Employee card page | ✅ | Clicking an employee in Reports now opens a dedicated card view (stats + attendance) instead of the shared Attendance page. |
 | 2026‑09‑29 | UI/UX polish pass | ✅ | Focus-visible rings, button press feedback, clickable-row affordance, styled scrollbars. |
 | 2026‑09‑30 | Standalone reminder app | ✅ | Self-installing `.exe` (see `docs/REMINDER_APP.md`) replaces the browser-extension reminder popup; fixed a Task Scheduler battery-power gotcha that silently blocked the sleep/wake trigger. |
+| 2026‑09‑30 | Calendar-aware reminders | ✅ | Reminder app now skips holidays/Sundays and adds a half-day punch-out window, backed by new unauthenticated `GET /calendar/public/today`; deployed to production and verified live. |
+| 2026‑09‑30 | Distribution folder | ✅ | All employee-facing packages (`WorkHubReminder.zip`, the browser-extension zips and source) consolidated into `distribution/`. |

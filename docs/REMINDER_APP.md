@@ -49,8 +49,11 @@ Employees don't have Python installed, so the script is built into a single
 ./scripts/build_reminder_exe.ps1
 ```
 
-This produces `release/WorkHubReminder.zip` (the `.exe` + a README) - that's
-the file to hand out. Employees just double-click the `.exe` once:
+This produces `release/WorkHubReminder.zip` (the `.exe` + a README). Copy
+that into [`distribution/`](../distribution/) - the one folder that holds
+everything handed to employees (this zip, plus the older browser-extension
+packaging, kept for reference) - and that's the file to hand out. Employees
+just double-click the `.exe` once:
 
 - It **relocates itself** to `%LOCALAPPDATA%\WorkHub\WorkHubReminder.exe` on
   first run, so Startup/the resume task keep working even after they delete
