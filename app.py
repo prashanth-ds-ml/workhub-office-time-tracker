@@ -1994,6 +1994,27 @@ def get_policy(
     return _get_policy_for_event_type(event_type).dict()
 
 
+@app.get("/calendar/public/today")
+def get_public_calendar_today() -> Dict[str, Any]:
+    """Unauthenticated day type for the standalone reminder app, which has no login.
+
+    Exposes only the company calendar's type/title for today (already visible to
+    every employee), never anything user-specific.
+    """
+    today = _ist_today()
+    key = today.isoformat()
+    # Read straight from storage, not the per-instance cache, which is only
+    # loaded at cold start and would miss calendar edits made on another
+    # serverless instance. Same precedence as _calendar_event_for_date.
+    explicit = _find_json(CALENDAR_EVENTS_FILE, {"date": key})
+    master = _find_json(HOLIDAY_MASTER_FILE, {"date": key})
+    row = explicit or master
+    if row:
+        return {"date": key, "event_type": row["event_type"], "title": row["title"]}
+    event = _synthetic_calendar_event(today)
+    return {"date": key, "event_type": event["event_type"], "title": event["title"]}
+
+
 @app.get("/calendar/events/{event_date}")
 def get_calendar_event(
     event_date: str,

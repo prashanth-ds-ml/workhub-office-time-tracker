@@ -1,9 +1,17 @@
 """Background punch-in / punch-out reminder for WorkHub.
 
 Runs quietly in the background (no browser extension needed), opens the
-WorkHub site once at login, and pops up a reminder window during the
-morning (10:45-11:00 IST) and evening (17:30-18:00 IST) windows, once per
-day per window. Time windows are evaluated in IST regardless of the
+WorkHub site once at login, and pops up a reminder window once per day per
+window, on working days only:
+
+    punch in    10:30-11:00 IST          (working day, half day, full Saturday)
+    punch out   17:30-18:00 IST          (working day, full Saturday)
+    punch out   14:30-15:00 IST          (half day)
+
+No reminders on holidays, comp-offs, long weekends or company events. The day
+type comes from the WorkHub API (/calendar/public/today, no login needed), with
+a built-in fallback (Sunday and 2nd/4th Saturday off, other Saturdays half day)
+if the API can't be reached. Windows are evaluated in IST regardless of the
 machine's local timezone, matching the server (see app.py's INDIA_TZ).
 
 A second, independent trigger opens WorkHub every time the laptop wakes from
@@ -35,6 +43,7 @@ import os
 import shutil
 import subprocess
 import sys
+import urllib.request
 import webbrowser
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -45,8 +54,12 @@ APP_URL = "https://workhub-office-time-tracker.vercel.app"
 INDIA_TZ = timezone(timedelta(hours=5, minutes=30))
 
 # (start_hour, start_minute, end_hour, end_minute)
-MORNING_WINDOW = (10, 45, 11, 0)
-EVENING_WINDOW = (17, 30, 18, 0)
+PUNCH_IN_WINDOW = (10, 30, 11, 0)
+PUNCH_OUT_WINDOW = (17, 30, 18, 0)
+HALF_DAY_PUNCH_OUT_WINDOW = (14, 30, 15, 0)
+
+ATTENDANCE_DAY_TYPES = {"WORKING_DAY", "HALF_DAY", "FULL_DAY_SATURDAY"}
+DAY_TYPE_TIMEOUT_SECONDS = 5
 
 CHECK_INTERVAL_MS = 60_000
 
@@ -100,17 +113,17 @@ def show_popup(root: Tk, title: str, message: str) -> None:
     popup.attributes("-topmost", True)
     popup.resizable(False, False)
 
-    width, height = 360, 180
+    width, height = 380, 210
     screen_w = popup.winfo_screenwidth()
     screen_h = popup.winfo_screenheight()
     x = (screen_w - width) // 2
     y = (screen_h - height) // 2
     popup.geometry(f"{width}x{height}+{x}+{y}")
 
-    Label(popup, text=title, font=("Segoe UI", 12, "bold"), wraplength=320, justify="left").pack(
+    Label(popup, text=title, font=("Segoe UI", 12, "bold"), wraplength=340, justify="left").pack(
         padx=20, pady=(20, 8), anchor="w"
     )
-    Label(popup, text=message, font=("Segoe UI", 10), wraplength=320, justify="left").pack(
+    Label(popup, text=message, font=("Segoe UI", 10), wraplength=340, justify="left").pack(
         padx=20, pady=(0, 16), anchor="w"
     )
 
@@ -129,30 +142,87 @@ def show_popup(root: Tk, title: str, message: str) -> None:
     popup.focus_force()
 
 
+def _fallback_day_type(day: date) -> str:
+    """Mirror of app.py's synthetic calendar, used when the API is unreachable."""
+    if day.weekday() == 6:
+        return "HOLIDAY"
+    if day.weekday() == 5:
+        return "HOLIDAY" if ((day.day - 1) // 7) + 1 in {2, 4} else "HALF_DAY"
+    return "WORKING_DAY"
+
+
+def _fetch_day_type(day: date) -> str:
+    try:
+        with urllib.request.urlopen(
+            f"{APP_URL}/api/calendar/public/today", timeout=DAY_TYPE_TIMEOUT_SECONDS
+        ) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        if data.get("date") == day.isoformat() and data.get("event_type"):
+            return data["event_type"]
+    except Exception:
+        pass
+    return _fallback_day_type(day)
+
+
+def _fmt_12h(hour: int, minute: int) -> str:
+    return f"{hour % 12 or 12}:{minute:02d} {'AM' if hour < 12 else 'PM'}"
+
+
+def _fmt_window(window: tuple[int, int, int, int]) -> str:
+    return f"{_fmt_12h(window[0], window[1])} - {_fmt_12h(window[2], window[3])} IST"
+
+
+def _fmt_now(now: datetime) -> str:
+    """12-hour IST, plus the laptop's own local time in brackets when it differs."""
+    text = f"{_fmt_12h(now.hour, now.minute)} IST"
+    local = now.astimezone()
+    if local.utcoffset() != now.utcoffset():
+        text += f" ({_fmt_12h(local.hour, local.minute)} {local.tzname() or 'local time'})"
+    return text
+
+
+def due_reminders(now: datetime, day_type_for) -> list[tuple[str, str, str]]:
+    """Return [(state_key, title, message)] for the windows `now` falls in.
+
+    `day_type_for` is called lazily, only once a window matches, so the API is
+    hit at most a few times a day rather than every minute."""
+    in_punch_in = _in_window(now, PUNCH_IN_WINDOW)
+    in_punch_out = _in_window(now, PUNCH_OUT_WINDOW)
+    in_half_day_out = _in_window(now, HALF_DAY_PUNCH_OUT_WINDOW)
+    if not (in_punch_in or in_punch_out or in_half_day_out):
+        return []
+    day_type = day_type_for(now.date())
+    if day_type not in ATTENDANCE_DAY_TYPES:
+        return []
+    clock = _fmt_now(now)
+    due = []
+    if in_punch_in:
+        due.append(("punch_in", "WorkHub: Time to punch in",
+                    f"It's {clock}. Don't forget to punch in for the day. "
+                    f"(Punch-in window: {_fmt_window(PUNCH_IN_WINDOW)})"))
+    if in_punch_out and day_type != "HALF_DAY":
+        due.append(("punch_out", "WorkHub: Time to punch out",
+                    f"It's {clock}. Don't forget to punch out before you leave. "
+                    f"(Punch-out window: {_fmt_window(PUNCH_OUT_WINDOW)})"))
+    if in_half_day_out and day_type == "HALF_DAY":
+        due.append(("punch_out", "WorkHub: Half day - time to punch out",
+                    f"It's {clock}. Today is a half day, so don't forget to punch out before you leave. "
+                    f"(Half-day punch-out window: {_fmt_window(HALF_DAY_PUNCH_OUT_WINDOW)})"))
+    return due
+
+
 def check_reminders(root: Tk) -> None:
-    now = _ist_now()
-    today_key = now.date().isoformat()
-    state = _load_state()
-
-    if _in_window(now, MORNING_WINDOW) and state.get("morning_notified") != today_key:
-        show_popup(
-            root,
-            "WorkHub: You haven't punched in",
-            "It's almost 11am. Don't forget to punch in for the day.",
-        )
-        state["morning_notified"] = today_key
-        _save_state(state)
-
-    if _in_window(now, EVENING_WINDOW) and state.get("evening_notified") != today_key:
-        show_popup(
-            root,
-            "WorkHub: You haven't punched out",
-            "It's almost 6pm. Don't forget to punch out before you leave.",
-        )
-        state["evening_notified"] = today_key
-        _save_state(state)
-
-    root.after(CHECK_INTERVAL_MS, check_reminders, root)
+    try:
+        now = _ist_now()
+        today_key = now.date().isoformat()
+        state = _load_state()
+        for key, title, message in due_reminders(now, _fetch_day_type):
+            if state.get(f"{key}_notified") != today_key:
+                state[f"{key}_notified"] = today_key
+                _save_state(state)
+                show_popup(root, title, message)
+    finally:
+        root.after(CHECK_INTERVAL_MS, check_reminders, root)
 
 
 def run_daemon() -> None:
@@ -176,8 +246,9 @@ def preview() -> None:
     root.withdraw()
     show_popup(
         root,
-        "WorkHub: You haven't punched in",
-        "This is a preview - it's almost 11am and you haven't started your workday yet.",
+        "WorkHub: Time to punch in",
+        f"This is a preview. It's {_fmt_now(_ist_now())}. Don't forget to punch in for the day. "
+        f"(Punch-in window: {_fmt_window(PUNCH_IN_WINDOW)})",
     )
     root.mainloop()
 

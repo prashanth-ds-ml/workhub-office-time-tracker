@@ -18,15 +18,27 @@ Employee-facing readme: [`scripts/WorkHubReminder-README.txt`](../scripts/WorkHu
      resume-from-sleep.
 2. **Reminder popups.** A small always-running tkinter process checks the
    time every minute (in IST, via a fixed UTC+5:30 offset - independent of the
-   laptop's own timezone) and shows a popup once per day, per window:
-   - **10:45-11:00am** - "you haven't punched in"
-   - **17:30-18:00** - "you haven't punched out"
+   laptop's own timezone) and shows a popup once per day, per window, **on
+   working days only**:
+   - **10:30 AM-11:00 AM IST** - punch in (working day, half day, full Saturday)
+   - **5:30 PM-6:00 PM IST** - punch out (working day, full Saturday)
+   - **2:30 PM-3:00 PM IST** - punch out on a **half day** (replaces the evening one)
 
-   By design this does **not** check whether the employee has actually
-   punched in/out (no login/API call from the daemon at all) - it always
-   reminds during those windows, and the employee dismisses it manually on
-   days they're already done. This was a deliberate scope call, not an
-   oversight.
+   No reminders on `HOLIDAY`, `COMP_OFF`, `LONG_WEEKEND` or `COMPANY_EVENT`.
+   The day type comes from the unauthenticated endpoint
+   `GET /api/calendar/public/today` (added in `app.py`; returns only date,
+   event type and title). It is fetched only when the clock is inside a
+   window. If the API can't be reached (offline, or not yet deployed), the
+   daemon falls back to the synthetic calendar rules: Sunday and 2nd/4th
+   Saturday off, other Saturdays half day - so calendar overrides made by a
+   manager are only honoured while the API is reachable.
+
+   Popups show times in 12-hour IST (plus the laptop's local time in
+   brackets when its timezone isn't IST).
+
+   By design it still does **not** check whether the employee has actually
+   punched in/out (that would need the daemon to hold a login token) - the
+   employee dismisses the popup on days they're already done.
 
 ## How it's packaged for distribution
 
