@@ -26,3 +26,5 @@
 | 2026‑09‑30 | Standalone reminder app | ✅ | Self-installing `.exe` (see `docs/REMINDER_APP.md`) replaces the browser-extension reminder popup; fixed a Task Scheduler battery-power gotcha that silently blocked the sleep/wake trigger. |
 | 2026‑09‑30 | Calendar-aware reminders | ✅ | Reminder app now skips holidays/Sundays and adds a half-day punch-out window, backed by new unauthenticated `GET /calendar/public/today`; deployed to production and verified live. |
 | 2026‑09‑30 | Distribution folder | ✅ | All employee-facing packages (`WorkHubReminder.zip`, the browser-extension zips and source) consolidated into `distribution/`. |
+| 2026‑10‑01 | Rollout hardening | ✅ | Official 2026 holidays seeded (never overriding manager edits); policy no longer reseeded on cold start; user/calendar caches refresh across Vercel instances; web action errors surfaced, role-change confirm, CSV formula guard; smoke test repaired and extended. |
+| 2026‑10‑01 | Team package | ✅ | `release/WorkHubReminder.zip` = exe + README + setup guide + `Uninstall.bat`; SHA-256 written beside it. Pending: real-laptop install test and a 2–3 person pilot. |
