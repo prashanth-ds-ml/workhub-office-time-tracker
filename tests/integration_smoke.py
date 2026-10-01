@@ -21,6 +21,7 @@ DATA_FILES = [
     "COMPANY_EVENTS_FILE",
     "ANNOUNCEMENT_READS_FILE",
     "ALERT_ACK_FILE",
+    "AUDIT_LOG_FILE",
 ]
 
 
@@ -75,6 +76,8 @@ def run() -> None:
                     "email": "admin@sims.healthcare",
                     "password": "admin123",
                     "role": "Manager",
+                    "security_question": "Test question",
+                    "security_answer": "test answer",
                 },
             )
         )
@@ -89,6 +92,8 @@ def run() -> None:
                     "username": "External Employee",
                     "email": "external@example.com",
                     "password": "secret1",
+                    "security_question": "Test question",
+                    "security_answer": "test answer",
                 },
             ),
             403,
@@ -104,7 +109,7 @@ def run() -> None:
         employee_auth = expect(
             client.post(
                 "/register",
-                json={"username": "Integration Employee", "email": "integration@sims.healthcare", "password": "secret1"},
+                json={"username": "Integration Employee", "email": "integration@sims.healthcare", "password": "secret1", "security_question": "Test question", "security_answer": "test answer"},
             )
         )
         employee = employee_auth["user"]
@@ -136,7 +141,7 @@ def run() -> None:
             client.post(
                 "/admin/users",
                 headers=admin_headers,
-                json={"username": "Managed Employee", "email": "managed@sims.healthcare", "password": "secret2", "role": "User"},
+                json={"username": "Managed Employee", "email": "managed@sims.healthcare", "password": "secret2", "role": "User", "security_question": "Test question", "security_answer": "test answer"},
             )
         )
         assert created["office_hours"] == policy["office_hours"]
@@ -144,7 +149,7 @@ def run() -> None:
             client.post(
                 "/admin/users",
                 headers=admin_headers,
-                json={"username": "External User", "email": "external@example.com", "password": "secret2"},
+                json={"username": "External User", "email": "external@example.com", "password": "secret2", "security_question": "Test question", "security_answer": "test answer"},
             ),
             403,
         )
@@ -214,6 +219,30 @@ def run() -> None:
         expect(client.patch(f"/admin/users/{employee['id']}", headers=admin_headers, json={"is_active": False}))
         expect(client.post("/login", json={"email": employee["email"], "password": "secret1"}), 403)
         expect(client.get("/me", headers=employee_headers), 403)
+
+        # Official holidays are seeded, and the reminder app's public endpoint works.
+        assert any(row["date"] == "2026-10-02" for row in storage.load_rows(app.HOLIDAY_MASTER_FILE))
+        public_today = expect(client.get("/calendar/public/today"))
+        assert public_today["date"] == event_date and public_today["event_type"] == "WORKING_DAY"
+
+        # A user written by "another instance" is visible without a restart.
+        other = app.User(username="Other Instance", email="other@sims.healthcare", password="x")
+        storage.upsert_rows(app.USERS_FILE, [other.dict()])
+        assert any(u["email"] == "other@sims.healthcare" for u in expect(client.get("/admin/users", headers=admin_headers)))
+
+        # A holiday added elsewhere shows on the calendar without a restart.
+        storage.upsert_rows(
+            app.HOLIDAY_MASTER_FILE,
+            [{"id": "x1", "date": "2026-12-30", "title": "Extra Holiday", "description": None, "event_type": "HOLIDAY", "source": "t", "updated_at": app._iso_now()}],
+        )
+        app._calendar_refreshed_at = 0.0
+        extra = expect(client.get("/calendar/events/2026-12-30", headers=admin_headers))
+        assert extra["event_type"] == "HOLIDAY" and extra["title"] == "Extra Holiday"
+
+        # Re-seeding (every cold start) must not overwrite a manager's changes.
+        app._seed_initial_data()
+        assert app._company_work_policy()["office_hours"] == policy["office_hours"]
+        assert sum(1 for r in storage.load_rows(app.HOLIDAY_MASTER_FILE) if r["date"] == "2026-10-02") == 1
 
         print("PASS: authentication, registration, roles, policy, employees, calendar, sessions, breaks, announcements, dashboard, analytics")
 

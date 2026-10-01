@@ -31,11 +31,12 @@ sign in.
 Problems? Close your laptop lid and reopen it. WorkHub should open again
 after about 15 seconds. If it doesn't, message me.
 
+Updating to a new version
+-------------------------
+Double-click Uninstall.bat from the old package first, then run the new
+WorkHubReminder.exe.
+
 Uninstall
 ---------
-Open PowerShell and run:
-  taskkill /f /im WorkHubReminder.exe
-  & "$env:LOCALAPPDATA\WorkHub\WorkHubReminder.exe" --uninstall-startup
-  & "$env:LOCALAPPDATA\WorkHub\WorkHubReminder.exe" --uninstall-resume-trigger
-Then delete that same file:
-  del "$env:LOCALAPPDATA\WorkHub\WorkHubReminder.exe"
+Double-click Uninstall.bat (in this folder). It stops the app, removes its
+startup entries and deletes it. Nothing else is left behind.

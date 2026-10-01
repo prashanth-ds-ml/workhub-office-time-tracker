@@ -527,24 +527,21 @@ def _holiday_master_rows() -> List[Dict[str, Any]]:
 
 
 def _seed_initial_data() -> None:
-    if not USERS_FILE.exists() or not _load_json(USERS_FILE):
-        _save_json(USERS_FILE, [])
-    if not ATTENDANCE_POLICIES_FILE.exists() or not _load_json(ATTENDANCE_POLICIES_FILE):
+    # Decide by what is stored, never by Path.exists(): in Postgres mode these
+    # paths are only table names and never exist on disk, so an exists() check
+    # would reseed defaults over real data on every serverless cold start.
+    if not _load_json(ATTENDANCE_POLICIES_FILE):
         _save_json(ATTENDANCE_POLICIES_FILE, DEFAULT_POLICIES)
-    if not COMPANY_WORK_POLICY_FILE.exists() or not _load_json(COMPANY_WORK_POLICY_FILE):
+    if not _load_json(COMPANY_WORK_POLICY_FILE):
         _save_json(COMPANY_WORK_POLICY_FILE, [DEFAULT_COMPANY_WORK_POLICY])
-    if not CALENDAR_EVENTS_FILE.exists():
-        _save_json(CALENDAR_EVENTS_FILE, [])
-    if not HOLIDAY_MASTER_FILE.exists():
-        _save_json(HOLIDAY_MASTER_FILE, [])
-    for path in [
-        ANNOUNCEMENTS_FILE,
-        COMPANY_EVENTS_FILE,
-        ANNOUNCEMENT_READS_FILE,
-        ALERT_ACK_FILE,
-    ]:
-        if not path.exists():
-            _save_json(path, [])
+    # Load any official 2026 holiday that has no entry yet. A date a manager has
+    # touched always has a master row (HOLIDAY) or an explicit calendar event
+    # (anything else), so their edits and removals are never overwritten.
+    known_dates = {row.get("date") for row in _load_json(HOLIDAY_MASTER_FILE)}
+    known_dates |= {row.get("date") for row in _load_json(CALENDAR_EVENTS_FILE)}
+    missing_holidays = [row for row in _holiday_master_rows() if row["date"] not in known_dates]
+    if missing_holidays:
+        upsert_rows(HOLIDAY_MASTER_FILE, missing_holidays)
 
 
 VALID_ROLES = {"User", "Manager", "Boss"}
@@ -910,6 +907,40 @@ def _refresh_cache(force: bool = False) -> None:
         _cache_refreshed_at = now
 
 
+_users_refreshed_at = 0.0
+_calendar_refreshed_at = 0.0
+
+
+def _refresh_users_cache(force: bool = False) -> None:
+    """Reload only the users table (TTL-throttled).
+
+    Each serverless instance loads its caches once at cold start, so users who
+    registered or changed on another instance would otherwise be missing from
+    the employee list, reports and digests until this instance restarts.
+    """
+    global users_cache, _users_refreshed_at
+    if not force and time.monotonic() - _users_refreshed_at < _CACHE_TTL_SECONDS:
+        return
+    with _cache_lock:
+        users_cache = [User(**row) for row in _load_json(USERS_FILE)]
+        _users_refreshed_at = time.monotonic()
+
+
+def _refresh_calendar_cache(force: bool = False) -> None:
+    """Reload calendar events, holiday master, policies and company events
+    (TTL-throttled) so edits made on another instance become visible."""
+    global calendar_events_cache, holiday_master_cache
+    global attendance_policies_cache, company_events_cache, _calendar_refreshed_at
+    if not force and time.monotonic() - _calendar_refreshed_at < _CACHE_TTL_SECONDS:
+        return
+    with _cache_lock:
+        calendar_events_cache = [CalendarEvent(**row) for row in _load_json(CALENDAR_EVENTS_FILE)]
+        holiday_master_cache = _load_json(HOLIDAY_MASTER_FILE)
+        attendance_policies_cache = [AttendancePolicy(**row) for row in _load_json(ATTENDANCE_POLICIES_FILE)]
+        company_events_cache = [CompanyEvent(**row) for row in _load_json(COMPANY_EVENTS_FILE)]
+        _calendar_refreshed_at = time.monotonic()
+
+
 def _persist_cache() -> None:
     _save_json(USERS_FILE, [row.dict() for row in users_cache])
     _save_json(SESSIONS_FILE, [row.dict() for row in sessions_cache])
@@ -985,6 +1016,7 @@ def is_manager(current_user: User = Depends(get_current_user)) -> User:
 
 
 def _policy_map() -> Dict[str, AttendancePolicy]:
+    _refresh_calendar_cache()
     _ensure_default_policies()
     return {policy.event_type: policy for policy in attendance_policies_cache}
 
@@ -1176,6 +1208,7 @@ def _synthetic_calendar_event(event_date: date) -> Dict[str, Any]:
 
 
 def _calendar_event_for_date(event_date: date) -> Dict[str, Any]:
+    _refresh_calendar_cache()
     master_match = next((row for row in holiday_master_cache if row.get("date") == event_date.isoformat()), None)
     if master_match:
         explicit = _explicit_calendar_event(event_date)
@@ -1422,6 +1455,7 @@ def _attendance_summary_for_date(user: User, target_date: date) -> Dict[str, Any
 
 
 def _dashboard_overview(user: User, month: str, announcement_limit: Optional[int] = None) -> Dict[str, Any]:
+    _refresh_calendar_cache()
     today = _ist_today()
     month_events = _month_calendar(month)
     long_weekends = _derive_long_weekends(month_events)
@@ -1884,6 +1918,7 @@ def set_company_work_policy(
         raise HTTPException(status_code=400, detail="Minimum break time cannot exceed maximum break time")
 
     _save_json(COMPANY_WORK_POLICY_FILE, [policy])
+    _refresh_users_cache(force=True)
     for user in users_cache:
         user.office_hours = policy["office_hours"].copy()
         user.rules = policy["rules"].copy()
@@ -2042,6 +2077,7 @@ def create_or_update_calendar_event(
     current_user: User = Depends(is_manager),
 ) -> Dict[str, Any]:
     event_date = _parse_date(payload.date)
+    _refresh_calendar_cache(force=True)
     existing = next((event for event in calendar_events_cache if event.date == payload.date), None)
     if existing:
         existing.event_type = payload.event_type
@@ -2105,6 +2141,7 @@ def create_or_update_calendar_event(
 
 @app.get("/company-events")
 def list_company_events(current_user: User = Depends(get_current_user)) -> List[Dict[str, Any]]:
+    _refresh_calendar_cache()
     return [event.dict() for event in sorted(company_events_cache, key=lambda item: item.event_date)]
 
 
@@ -2113,6 +2150,7 @@ def create_company_event(
     payload: CompanyEventCreate,
     current_user: User = Depends(is_manager),
 ) -> Dict[str, Any]:
+    _refresh_calendar_cache(force=True)
     event = CompanyEvent(
         title=payload.title,
         description=payload.description,
@@ -2193,6 +2231,7 @@ def get_dashboard_overview(
 
 @app.get("/admin/dashboard")
 def admin_dashboard(current_user: User = Depends(is_admin)) -> Dict[str, Any]:
+    _refresh_users_cache()
     dashboard: Dict[str, Dict[str, float]] = {}
     all_sessions = [_normalize_session(Session(**row)) for row in _query_json(SESSIONS_FILE, sort=[("start", -1)])]
     all_breaks = [_normalize_break(Break(**row)) for row in _query_json(BREAKS_FILE, sort=[("start", 1)])]
@@ -2229,6 +2268,7 @@ def _calendar_events_in_range(range_start: date, range_end: date) -> List[Dict[s
 
 def _admin_analytics(range_start: date, range_end: date, label: str) -> Dict[str, Any]:
     """`range_end` is exclusive."""
+    _refresh_users_cache()
     range_events = _calendar_events_in_range(range_start, range_end)
     attendance_events = {
         event["date"]: event
@@ -2389,6 +2429,7 @@ def web_announcements(
 
 @app.get("/admin/users")
 def admin_users(current_user: User = Depends(is_admin)) -> List[Dict[str, Any]]:
+    _refresh_users_cache(force=True)
     return [_user_summary(user) for user in users_cache]
 
 
@@ -2460,14 +2501,16 @@ def admin_update_user(
     changed_sessions: List[Session] = []
     changed_breaks: List[Break] = []
     if user.is_active is False:
-        for session in sessions_cache:
-            if session.user_id == user.id and session.end is None:
-                session.end = _now()
-                changed_sessions.append(session)
-                for brk in breaks_cache:
-                    if brk.session_id == session.id and brk.end is None:
-                        brk.end = _now()
-                        changed_breaks.append(brk)
+        # End any open session/break straight from storage; the per-instance
+        # session caches may not know about a punch-in made on another instance.
+        active_session = _active_session_for_user(user.id)
+        if active_session:
+            active_session.end = _now()
+            changed_sessions.append(active_session)
+            active_break = _active_break_for_session(active_session.id)
+            if active_break:
+                active_break.end = _now()
+                changed_breaks.append(active_break)
     _upsert_models(USERS_FILE, [user])
     if changed_sessions:
         _upsert_models(SESSIONS_FILE, changed_sessions)
@@ -2490,6 +2533,7 @@ def _require_cron_secret(authorization: Optional[str] = Header(None)) -> None:
 @app.get("/cron/daily-digest")
 def cron_daily_digest(_: None = Depends(_require_cron_secret)) -> Dict[str, Any]:
     today = _ist_today()
+    _refresh_users_cache(force=True)
     event = _calendar_event_for_date(today)
     if not _event_requires_attendance(event["event_type"]):
         return {"sent": False, "reason": "not a working day"}
@@ -2534,6 +2578,7 @@ def cron_daily_digest(_: None = Depends(_require_cron_secret)) -> Dict[str, Any]
 
 @app.get("/cron/weekly-digest")
 def cron_weekly_digest(_: None = Depends(_require_cron_secret)) -> Dict[str, Any]:
+    _refresh_users_cache(force=True)
     today = _ist_today()
     week_end = today
     week_start = week_end - timedelta(days=7)

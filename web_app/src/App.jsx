@@ -69,7 +69,12 @@ const mins = value => {
   const n = Math.max(0, Number(value || 0));
   return `${Math.floor(n / 60)}h ${Math.round(n % 60)}m`;
 };
-const csvCell = value => `"${String(value ?? "").replaceAll("\"", "\"\"")}"`;
+// Text cells starting with = + - @ (or tab/CR) are prefixed so Excel can't run them as formulas.
+const csvCell = value => {
+  const text = String(value ?? "");
+  const safe = typeof value === "string" && "=+-@".includes(text[0]) ? `'${text}` : text;
+  return `"${safe.replaceAll("\"", "\"\"")}"`;
+};
 const downloadCsv = (filename, rows) => {
   const blob = new Blob([rows.map(row => row.map(csvCell).join(",")).join("\n")], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
@@ -445,7 +450,7 @@ export default function App() {
     } catch (err) {
       if (err.status === 401 || err.status === 403) logout(); else setError(err.message);
     } finally { setSectionBusy(""); }
-  }, [auth, hasOverview, month, admin, canManage, logout, persistWorkspace, reportRange, attendanceUserId]);
+  }, [auth, hasOverview, selectedMonth, month, admin, canManage, logout, persistWorkspace, reportRange, attendanceUserId]);
   const updateToday = useCallback(todaySummary => {
     setData(previous => {
       const next = {
@@ -516,9 +521,19 @@ export default function App() {
       if (page === "attendance") loadSection("attendance");
     } catch(err){ setError(err.message); } finally{setBusy(false);}
   };
-  const markRead = async id => { await api(`/announcements/${id}/read`,{token:auth.token,method:"POST"}); loadSection("announcements"); };
-  const toggleUser = async user => { await api(`/admin/users/${user.id}`,{token:auth.token,method:"PATCH",body:{is_active:!user.is_active}}); loadSection("employees"); };
-  const changeUserRole = async (user, role) => { if (role === user.role) return; await api(`/admin/users/${user.id}`,{token:auth.token,method:"PATCH",body:{role}}); loadSection("employees"); };
+  const runAdminAction = async (request, section) => {
+    setError("");
+    try { await request(); }
+    catch (err) { if (err.status === 401 || err.status === 403) logout(); else setError(err.message); }
+    loadSection(section);
+  };
+  const markRead = id => runAdminAction(() => api(`/announcements/${id}/read`,{token:auth.token,method:"POST"}), "announcements");
+  const toggleUser = user => runAdminAction(() => api(`/admin/users/${user.id}`,{token:auth.token,method:"PATCH",body:{is_active:!user.is_active}}), "employees");
+  const changeUserRole = (user, role) => {
+    if (role === user.role) return;
+    if (!window.confirm(`Change ${user.username}'s role from ${user.role} to ${role}?`)) return loadSection("employees");
+    return runAdminAction(() => api(`/admin/users/${user.id}`,{token:auth.token,method:"PATCH",body:{role}}), "employees");
+  };
   const exportAnalytics = () => {
     if (!data.analytics) return;
     const summary = data.analytics.summary || {};

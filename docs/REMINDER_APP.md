@@ -63,7 +63,7 @@ just double-click the `.exe` once:
 - It shows a one-time "WorkHub Reminder installed" popup so they know it
   worked, then opens WorkHub immediately.
 
-No admin rights, no installer, no manual configuration.
+No admin rights, no installer, no manual configuration. The zip also contains `Uninstall.bat` (double-click to remove everything), the setup guide, and `release/WorkHubReminder.sha256.txt` is written next to the zip so IT can allow-list the exact exe.
 
 ## Command-line flags (source or built .exe)
 

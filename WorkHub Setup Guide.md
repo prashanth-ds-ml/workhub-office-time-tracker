@@ -71,18 +71,11 @@ The app copies itself to a permanent folder, so you can delete the downloaded zi
 
 ### Updating
 
-If you're sent a new version, **uninstall the old one first** (steps below), then install the new one as in "Install" above. Running the new file without uninstalling will not update the installed copy.
+If you're sent a new version, **uninstall the old one first** (see below), then install the new one as in "Install" above. Running the new file without uninstalling will not update the installed copy.
 
 ### Uninstall
 
-Open PowerShell and run these four lines (the first one stops the running app; it's fine if it says the process wasn't found):
-
-```powershell
-taskkill /f /im WorkHubReminder.exe
-& "$env:LOCALAPPDATA\WorkHub\WorkHubReminder.exe" --uninstall-startup
-& "$env:LOCALAPPDATA\WorkHub\WorkHubReminder.exe" --uninstall-resume-trigger
-del "$env:LOCALAPPDATA\WorkHub\WorkHubReminder.exe"
-```
+Double-click **`Uninstall.bat`** (it's in the same folder as `WorkHubReminder.exe` in the zip). It stops the app, removes its startup entries and deletes it. If you no longer have the zip, ask your admin to send it again.
 
 ---
 
